@@ -1,3 +1,10 @@
+## v1.0.5 - 2026-02-01
+* Merge branch 'teste' into dev
+* fix: teste
+* chore(release):
+* chore(release):
+* teste
+* chore(release): v1.0.4
 ##  - 2026-02-01
 * chore(release):
 * teste
