@@ -93,13 +93,26 @@ jobs:
 
       # package.json
       - name: Update package.json
-        if: env.bump != 'none' && hashFiles('package.json') != ''
+        if: env.bump != 'none'
         run: |
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
+
+          # Procurar todos os package.json
+          FILES=$(find . -name package.json)
+
+          if [ -z "$FILES" ]; then
+            echo "No package.json found, skipping."
+            exit 0
+          fi
+
           sudo apt-get update && sudo apt-get install -y jq
-          jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
-          git add package.json
+
+          for FILE in $FILES; do
+            echo "Updating $FILE version to $VERSION"
+            jq ".version=\"$VERSION\"" "$FILE" > tmp.json && mv tmp.json "$FILE"
+            git add "$FILE"
+          done
 
       # CHANGELOG
       - name: Update changelog
