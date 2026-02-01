@@ -1,3 +1,7 @@
+## v1.0.8 - 2026-02-01
+* Merge branch 'teste' into dev
+* fix: novo teste
+* chore(release): v1.0.7
 ## v1.0.7 - 2026-02-01
 * fix: novo teste
 * Update teste.txt
