@@ -1,3 +1,7 @@
+## v1.0.6 - 2026-02-01
+* ci: nova versão do ficheiro
+* chore(release):
+* chore(release): v1.0.5
 ##  - 2026-02-01
 * chore(release): v1.0.5
 ## v1.0.5 - 2026-02-01
