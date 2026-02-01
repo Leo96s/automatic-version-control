@@ -13,6 +13,9 @@ jobs:
       contents: write
 
     steps:
+      # ---------------------------
+      # 1️⃣ Checkout completo
+      # ---------------------------
       - name: Checkout code
         uses: actions/checkout@v3
         with:
@@ -22,7 +25,7 @@ jobs:
         run: git fetch --tags
 
       # ---------------------------
-      # 1️⃣ Última tag
+      # 2️⃣ Obter última tag
       # ---------------------------
       - name: Get latest tag
         run: |
@@ -30,7 +33,7 @@ jobs:
           echo "latest_tag=$TAG" >> $GITHUB_ENV
 
       # ---------------------------
-      # 2️⃣ Commits novos
+      # 3️⃣ Obter commits desde última versão
       # ---------------------------
       - name: Get commits since last tag
         run: |
@@ -45,7 +48,7 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       # ---------------------------
-      # 3️⃣ Calcular nova versão
+      # 4️⃣ Calcular nova versão
       # ---------------------------
       - name: Calculate version
         run: |
@@ -73,7 +76,7 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
 
       # ---------------------------
-      # 4️⃣ Configurar git (ANTES dos commits)
+      # 5️⃣ Configurar git
       # ---------------------------
       - name: Configure git
         run: |
@@ -81,7 +84,16 @@ jobs:
           git config --local user.name "GitHub Actions"
 
       # ---------------------------
-      # 5️⃣ Atualizar package.json (se existir)
+      # 6️⃣ Criar TAG NO COMMIT ORIGINAL (FIX PRINCIPAL)
+      # ---------------------------
+      - name: Tag original commit
+        run: |
+          ORIGINAL_SHA=$(git rev-parse HEAD)
+          git tag ${{ env.new_version }} $ORIGINAL_SHA || echo "Tag exists"
+          git push origin ${{ env.new_version }}
+
+      # ---------------------------
+      # 7️⃣ Atualizar package.json (se existir)
       # ---------------------------
       - name: Update package.json if exists
         run: |
@@ -95,17 +107,16 @@ jobs:
           fi
 
       # ---------------------------
-      # 6️⃣ Gerar CHANGELOG + RELEASE_NOTES
+      # 8️⃣ Gerar CHANGELOG + RELEASE_NOTES
       # ---------------------------
       - name: Generate changelog and release notes
         run: |
           DATE=$(date +'%Y-%m-%d')
           VERSION=${{ env.new_version }}
+          PREVIOUS_TAG=${{ env.latest_tag }}
 
           touch CHANGELOG.md
           touch RELEASE_NOTES.md
-
-          PREVIOUS_TAG=${{ env.latest_tag }}
 
           if git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
             LOG=$(git log --pretty=format:"* %s" ${PREVIOUS_TAG}..HEAD)
@@ -131,7 +142,7 @@ jobs:
           git add CHANGELOG.md RELEASE_NOTES.md
 
       # ---------------------------
-      # 7️⃣ Commit automático (IGUAL AO TEU ORIGINAL)
+      # 9️⃣ Commit automático do bot
       # ---------------------------
       - name: Commit release files
         run: |
@@ -141,11 +152,3 @@ jobs:
             git commit -m "chore(release): ${{ env.new_version }}"
             git push origin HEAD
           fi
-
-      # ---------------------------
-      # 8️⃣ Criar tag no final
-      # ---------------------------
-      - name: Create and push tag
-        run: |
-          git tag ${{ env.new_version }} || echo "Tag exists"
-          git push origin ${{ env.new_version }}
