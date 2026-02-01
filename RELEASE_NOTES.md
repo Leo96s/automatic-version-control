@@ -1,3 +1,6 @@
+## v0.1.0 - 2026-02-01
+* feat: teste se funciona o incremento
+* chore(release): v0.0.5
 ## v0.0.5 - 2026-02-01
 * ci: mais uma tentativa
 ## v0.0.4 - 2026-02-01
