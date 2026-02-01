@@ -1,3 +1,6 @@
+## v1.0.4 - 2026-02-01
+* ci: teste nvo
+* chore(release): v1.0.3
 ## v1.0.3 - 2026-02-01
 * chore(release): v1.0.2
 ## v1.0.2 - 2026-02-01
