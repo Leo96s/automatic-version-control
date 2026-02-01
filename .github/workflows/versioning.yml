@@ -1,4 +1,4 @@
-name: Semantic Versioning
+name: Semantic Versioning + Changelog
 
 on:
   push:
@@ -13,9 +13,6 @@ jobs:
       contents: write
 
     steps:
-      # ---------------------------
-      # Checkout completo
-      # ---------------------------
       - name: Checkout repo (full history)
         uses: actions/checkout@v3
         with:
@@ -25,23 +22,22 @@ jobs:
         run: git fetch --tags
 
       # ---------------------------
-      # 1️⃣ Obter última versão
+      # 1️⃣ Última tag
       # ---------------------------
       - name: Get latest tag
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "latest_tag=$TAG" >> $GITHUB_ENV
-          echo "Última tag: $TAG"
 
       # ---------------------------
-      # 2️⃣ Ler commits desde a última tag
+      # 2️⃣ Commits desde a última versão
       # ---------------------------
-      - name: Get commit messages since last tag
+      - name: Collect commits
         run: |
           if git rev-parse "${{ env.latest_tag }}" >/dev/null 2>&1; then
-            LOG=$(git log ${{ env.latest_tag }}..HEAD --pretty=%B)
+            LOG=$(git log ${{ env.latest_tag }}..HEAD --pretty=format:"%s")
           else
-            LOG=$(git log HEAD --pretty=%B)
+            LOG=$(git log HEAD --pretty=format:"%s")
           fi
 
           echo "COMMITS<<EOF" >> $GITHUB_ENV
@@ -55,7 +51,6 @@ jobs:
         run: |
           VERSION=${{ env.latest_tag }}
           VERSION=${VERSION#v}
-
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           COMMITS="${{ env.COMMITS }}"
 
@@ -65,8 +60,6 @@ jobs:
             BUMP="major"
           elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
             BUMP="minor"
-          elif echo "$COMMITS" | grep -qE "^(fix|docs|style|test|ci|chore)(\(.+\))?:"; then
-            BUMP="patch"
           fi
 
           if [ "$BUMP" = "major" ]; then
@@ -79,53 +72,78 @@ jobs:
 
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
-          echo "Nova versão: $NEW_VERSION"
 
       # ---------------------------
       # 4️⃣ Atualizar package.json (se existir)
       # ---------------------------
-      - name: Update package.json version (if present)
+      - name: Update package.json
         run: |
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
 
           if [ -f package.json ]; then
-            echo "package.json encontrado — a atualizar versão para $VERSION"
-
-            if ! command -v jq &> /dev/null; then
-              sudo apt-get update && sudo apt-get install -y jq
-            fi
-
+            sudo apt-get update && sudo apt-get install -y jq
             jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
-          else
-            echo "package.json não existe — a saltar atualização"
           fi
 
       # ---------------------------
-      # 5️⃣ Commit da nova versão (se houver alterações)
+      # 5️⃣ Gerar CHANGELOG e RELEASE_NOTES
       # ---------------------------
-      - name: Commit version bump
+      - name: Generate changelog files
+        run: |
+          DATE=$(date +'%Y-%m-%d')
+          VERSION=${{ env.new_version }}
+          COMMITS="${{ env.COMMITS }}"
+
+          # Criar ficheiros se não existirem
+          touch CHANGELOG.md
+          touch RELEASE_NOTES.md
+
+          # Categorizar commits
+          FEATS=$(echo "$COMMITS" | grep -E "^feat" || true)
+          FIXES=$(echo "$COMMITS" | grep -E "^fix" || true)
+          OTHERS=$(echo "$COMMITS" | grep -Ev "^(feat|fix)" || true)
+
+          {
+            echo "## $VERSION - $DATE"
+            echo ""
+            [ ! -z "$FEATS" ] && echo "### 🚀 Features" && echo "$FEATS" | sed 's/^/- /' && echo ""
+            [ ! -z "$FIXES" ] && echo "### 🐛 Fixes" && echo "$FIXES" | sed 's/^/- /' && echo ""
+            [ ! -z "$OTHERS" ] && echo "### 🔧 Others" && echo "$OTHERS" | sed 's/^/- /'
+            echo ""
+          } > NEW_CHANGELOG.md
+
+          cat CHANGELOG.md >> NEW_CHANGELOG.md
+          mv NEW_CHANGELOG.md CHANGELOG.md
+
+          {
+            echo "# Release $VERSION"
+            echo ""
+            echo "$COMMITS" | sed 's/^/- /'
+            echo ""
+          } > RELEASE_NOTES.md
+
+      # ---------------------------
+      # 6️⃣ Commit automático
+      # ---------------------------
+      - name: Commit version + changelog
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          if [ -f package.json ]; then
-            git add package.json
-          fi
-
-          git diff --cached --quiet && echo "Nada para commit" || git commit -m "chore(release): ${{ env.new_version }}"
+          git add package.json CHANGELOG.md RELEASE_NOTES.md 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }}"
 
       # ---------------------------
-      # 6️⃣ Criar TAG
+      # 7️⃣ Criar tag
       # ---------------------------
       - name: Create tag
-        run: |
-          git tag ${{ env.new_version }} || echo "Tag já existe"
+        run: git tag ${{ env.new_version }} || echo "Tag exists"
 
       # ---------------------------
-      # 7️⃣ Push mudanças + tag
+      # 8️⃣ Push tudo
       # ---------------------------
-      - name: Push changes and tag
+      - name: Push changes
         run: |
           git push origin HEAD
           git push origin ${{ env.new_version }}
