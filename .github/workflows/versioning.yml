@@ -1,4 +1,4 @@
-name: Semantic Versioning + Changelog
+name: Semantic Versioning
 
 on:
   push:
@@ -21,52 +21,54 @@ jobs:
 
       # Última tag
       - name: Get latest tag
+        id: tag
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "latest_tag=$TAG" >> $GITHUB_ENV
 
-      # Commits novos
-      - name: Get commits
+      # Commits desde última versão
+      - name: Collect commits
+        id: commits
         run: |
-          if git rev-parse "${{ env.latest_tag }}" >/dev/null 2>&1; then
-            LOG=$(git log --pretty=%B ${{ env.latest_tag }}..HEAD)
-          else
-            LOG=$(git log --pretty=%B HEAD)
-          fi
+          RANGE="${{ env.latest_tag }}..HEAD"
+          git log --pretty="%H|%s" $RANGE > commits.txt || true
 
-          echo "COMMITS<<EOF" >> $GITHUB_ENV
-          echo "$LOG" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+      # Determinar bump + commit correto
+      - name: Analyze commits
+        id: analyze
+        run: |
+          BUMP="none"
+          TARGET_SHA=""
 
-      # Determinar bump
-      - name: Calculate version
-        id: version
+          while IFS='|' read -r SHA MSG; do
+            if [[ "$MSG" == *"BREAKING CHANGE"* ]]; then
+              BUMP="major"; TARGET_SHA=$SHA; break
+            elif [[ "$MSG" =~ ^feat(\(.+\))?: ]]; then
+              BUMP="minor"; TARGET_SHA=$SHA; break
+            elif [[ "$MSG" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
+              BUMP="patch"; TARGET_SHA=$SHA; break
+            fi
+          done < commits.txt
+
+          echo "bump=$BUMP" >> $GITHUB_ENV
+          echo "target_sha=$TARGET_SHA" >> $GITHUB_ENV
+
+      # Parar tudo se não houver bump
+      - name: Stop if no version change
+        if: env.bump == 'none'
+        run: echo "No versionable commits — stopping."
+
+      # Calcular nova versão
+      - name: Calculate new version
+        if: env.bump != 'none'
         run: |
           VERSION=${{ env.latest_tag }}
           VERSION=${VERSION#v}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
-          COMMITS="${{ env.COMMITS }}"
-          BUMP="none"
-
-          if echo "$COMMITS" | grep -q "BREAKING CHANGE"; then
-            BUMP="major"
-          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
-            BUMP="minor"
-          elif echo "$COMMITS" | grep -qE "^(fix|docs|style|test|ci)(\(.+\))?:"; then
-            BUMP="patch"
-          fi
-
-          echo "bump=$BUMP" >> $GITHUB_ENV
-
-          if [ "$BUMP" = "none" ]; then
-            echo "Sem commits versionáveis — a sair."
-            exit 0
-          fi
-
-          if [ "$BUMP" = "major" ]; then
+          if [ "${{ env.bump }}" = "major" ]; then
             MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
-          elif [ "$BUMP" = "minor" ]; then
+          elif [ "${{ env.bump }}" = "minor" ]; then
             MINOR=$((MINOR+1)); PATCH=0
           else
             PATCH=$((PATCH+1))
@@ -75,59 +77,55 @@ jobs:
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
 
-      # Só continua se houver bump
-      - name: Stop if no version change
-        if: env.bump == 'none'
-        run: exit 0
-
-      # Git config
-      - run: |
+      # Configurar git
+      - name: Git config
+        if: env.bump != 'none'
+        run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
 
-      # TAG NO TEU COMMIT
-      - name: Tag original commit
+      # TAG NO COMMIT CERTO
+      - name: Tag correct commit
+        if: env.bump != 'none'
         run: |
-          SHA=$(git rev-parse HEAD)
-          git tag ${{ env.new_version }} $SHA || echo "Tag exists"
+          git tag ${{ env.new_version }} ${{ env.target_sha }}
           git push origin ${{ env.new_version }}
 
       # package.json
-      - name: Update package.json if exists
+      - name: Update package.json
+        if: env.bump != 'none' && hashFiles('package.json') != ''
         run: |
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
-          if [ -f package.json ]; then
-            sudo apt-get update && sudo apt-get install -y jq
-            jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
-            git add package.json
-          fi
+          sudo apt-get update && sudo apt-get install -y jq
+          jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
+          git add package.json
 
       # CHANGELOG
-      - name: Generate changelog
+      - name: Update changelog
+        if: env.bump != 'none'
         run: |
           DATE=$(date +'%Y-%m-%d')
           VERSION=${{ env.new_version }}
-          PREVIOUS_TAG=${{ env.latest_tag }}
 
           touch CHANGELOG.md RELEASE_NOTES.md
+          LOG=$(git log --pretty=format:"* %s" ${{ env.latest_tag }}..HEAD)
 
-          LOG=$(git log --pretty=format:"* %s" ${PREVIOUS_TAG}..HEAD)
+          echo "## $VERSION - $DATE" > tmp1.md
+          echo "$LOG" >> tmp1.md
+          cat CHANGELOG.md >> tmp1.md
+          mv tmp1.md CHANGELOG.md
 
-          echo "## $VERSION - $DATE" > temp_CHANGELOG.md
-          echo "$LOG" >> temp_CHANGELOG.md
-          cat CHANGELOG.md >> temp_CHANGELOG.md
-          mv temp_CHANGELOG.md CHANGELOG.md
-
-          echo "## $VERSION - $DATE" > temp_RELEASE_NOTES.md
-          echo "$LOG" >> temp_RELEASE_NOTES.md
-          cat RELEASE_NOTES.md >> temp_RELEASE_NOTES.md
-          mv temp_RELEASE_NOTES.md RELEASE_NOTES.md
+          echo "## $VERSION - $DATE" > tmp2.md
+          echo "$LOG" >> tmp2.md
+          cat RELEASE_NOTES.md >> tmp2.md
+          mv tmp2.md RELEASE_NOTES.md
 
           git add CHANGELOG.md RELEASE_NOTES.md
 
-      # Commit bot
+      # Commit automático
       - name: Commit release files
+        if: env.bump != 'none'
         run: |
           git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }}"
           git push origin HEAD
