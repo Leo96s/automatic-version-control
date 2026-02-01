@@ -1,3 +1,8 @@
+## v1.0.9 - 2026-02-01
+* ci: corrigido erro no update do package.json
+* chore(release): v1.0.8
+* Merge branch 'teste' into dev
+* chore(release): v1.0.7
 ## v1.0.8 - 2026-02-01
 * Merge branch 'teste' into dev
 * fix: novo teste
