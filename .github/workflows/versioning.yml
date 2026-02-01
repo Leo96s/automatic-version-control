@@ -13,6 +13,9 @@ jobs:
       contents: write
 
     steps:
+      # ---------------------------
+      # Checkout completo
+      # ---------------------------
       - name: Checkout repo (full history)
         uses: actions/checkout@v3
         with:
@@ -25,17 +28,15 @@ jobs:
       # 1️⃣ Obter última versão
       # ---------------------------
       - name: Get latest tag
-        id: get_tag
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "latest_tag=$TAG" >> $GITHUB_ENV
           echo "Última tag: $TAG"
 
       # ---------------------------
-      # 2️⃣ Ler commits novos
+      # 2️⃣ Ler commits desde a última tag
       # ---------------------------
       - name: Get commit messages since last tag
-        id: commits
         run: |
           if git rev-parse "${{ env.latest_tag }}" >/dev/null 2>&1; then
             LOG=$(git log ${{ env.latest_tag }}..HEAD --pretty=%B)
@@ -48,16 +49,14 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
       # ---------------------------
-      # 3️⃣ Determinar tipo de bump
+      # 3️⃣ Calcular nova versão
       # ---------------------------
       - name: Calculate new version
-        id: version
         run: |
           VERSION=${{ env.latest_tag }}
           VERSION=${VERSION#v}
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
           COMMITS="${{ env.COMMITS }}"
 
           BUMP="patch"
@@ -83,32 +82,49 @@ jobs:
           echo "Nova versão: $NEW_VERSION"
 
       # ---------------------------
-      # 4️⃣ Atualizar package.json
+      # 4️⃣ Atualizar package.json (se existir)
       # ---------------------------
-      - name: Update package.json version
+      - name: Update package.json version (if present)
         run: |
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
-          jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
+
+          if [ -f package.json ]; then
+            echo "package.json encontrado — a atualizar versão para $VERSION"
+
+            if ! command -v jq &> /dev/null; then
+              sudo apt-get update && sudo apt-get install -y jq
+            fi
+
+            jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
+          else
+            echo "package.json não existe — a saltar atualização"
+          fi
 
       # ---------------------------
-      # 5️⃣ Commit da nova versão
+      # 5️⃣ Commit da nova versão (se houver alterações)
       # ---------------------------
       - name: Commit version bump
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          git add package.json
-          git commit -m "chore(release): ${{ env.new_version }}" || echo "Nada para commit"
+          if [ -f package.json ]; then
+            git add package.json
+          fi
+
+          git diff --cached --quiet && echo "Nada para commit" || git commit -m "chore(release): ${{ env.new_version }}"
 
       # ---------------------------
-      # 6️⃣ Criar e enviar TAG
+      # 6️⃣ Criar TAG
       # ---------------------------
       - name: Create tag
         run: |
           git tag ${{ env.new_version }} || echo "Tag já existe"
 
+      # ---------------------------
+      # 7️⃣ Push mudanças + tag
+      # ---------------------------
       - name: Push changes and tag
         run: |
           git push origin HEAD
