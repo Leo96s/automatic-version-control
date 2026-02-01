@@ -1,3 +1,7 @@
+## v1.0.7 - 2026-02-01
+* fix: novo teste
+* Update teste.txt
+* chore(release): v1.0.6
 ## v1.0.6 - 2026-02-01
 * ci: nova versão do ficheiro
 * chore(release):
