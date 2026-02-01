@@ -1,4 +1,4 @@
-name: Automated Versioning with Tags Based on Commit Messages
+name: Semantic Versioning
 
 on:
   push:
@@ -8,146 +8,108 @@ on:
 
 jobs:
   versioning:
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-      issues: write
-      pull-requests: write
-  
-    runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Check out the repository
-      - name: Check out the code
+      - name: Checkout repo (full history)
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # Ensure full history is fetched
+          fetch-depth: 0
 
-      # Step 2: Fetch all tags
-      - name: Fetch tags
+      - name: Fetch all tags
         run: git fetch --tags
 
-      # Step 3: Get the latest tag or default to v0.0.0
+      # ---------------------------
+      # 1️⃣ Obter última versão
+      # ---------------------------
       - name: Get latest tag
-        id: tag
+        id: get_tag
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "Latest tag: $TAG"
           echo "latest_tag=$TAG" >> $GITHUB_ENV
+          echo "Última tag: $TAG"
 
-      # Step 4: Determine version bump based on commit messages
-      - name: Analyze commits for version bump
-        id: bump
+      # ---------------------------
+      # 2️⃣ Ler commits novos
+      # ---------------------------
+      - name: Get commit messages since last tag
+        id: commits
         run: |
-          TAG=${{ env.latest_tag }}
-          VERSION=${TAG#v}  # Remove 'v' prefix
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            COMMITS=$(git log --pretty=%B ${TAG}..HEAD)
+          if git rev-parse "${{ env.latest_tag }}" >/dev/null 2>&1; then
+            LOG=$(git log ${{ env.latest_tag }}..HEAD --pretty=%B)
           else
-            COMMITS=$(git log --pretty=%B HEAD)
+            LOG=$(git log HEAD --pretty=%B)
           fi
 
+          echo "COMMITS<<EOF" >> $GITHUB_ENV
+          echo "$LOG" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # ---------------------------
+      # 3️⃣ Determinar tipo de bump
+      # ---------------------------
+      - name: Calculate new version
+        id: version
+        run: |
+          VERSION=${{ env.latest_tag }}
+          VERSION=${VERSION#v}
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          COMMITS="${{ env.COMMITS }}"
+
           BUMP="patch"
+
           if echo "$COMMITS" | grep -q "BREAKING CHANGE"; then
             BUMP="major"
-          elif echo "$COMMITS" | grep -q "^feat:"; then
+          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
             BUMP="minor"
-          elif echo "$COMMITS" | grep -q "^fix:"; then
+          elif echo "$COMMITS" | grep -qE "^(fix|docs|style|test|ci|chore)(\(.+\))?:"; then
             BUMP="patch"
           fi
 
           if [ "$BUMP" = "major" ]; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
+            MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
           elif [ "$BUMP" = "minor" ]; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          elif [ "$BUMP" = "patch" ]; then
-            PATCH=$((PATCH + 1))
+            MINOR=$((MINOR+1)); PATCH=0
+          else
+            PATCH=$((PATCH+1))
           fi
 
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
-          echo "New version: $NEW_VERSION"
           echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
+          echo "Nova versão: $NEW_VERSION"
 
-      # Step 5: Create and push the new tag (only if it doesn't exist)
-      - name: Create and push new tag
+      # ---------------------------
+      # 4️⃣ Atualizar package.json
+      # ---------------------------
+      - name: Update package.json version
         run: |
-          if git rev-parse ${{ env.new_version }} >/dev/null 2>&1; then
-            echo "Tag ${{ env.new_version }} already exists. Skipping."
-          else
-            git tag ${{ env.new_version }}
-            git push origin ${{ env.new_version }}
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION=${{ env.new_version }}
+          VERSION=${VERSION#v}
+          jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
 
-      # Step 6: Configure Git identity
-      - name: Configure Git identity
+      # ---------------------------
+      # 5️⃣ Commit da nova versão
+      # ---------------------------
+      - name: Commit version bump
         run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Actions"
-          
-      # Step 7: Update RELEASE_NOTES.md and CHANGELOG.md
-      - name: Update RELEASE_NOTES.md and CHANGELOG.md
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git add package.json
+          git commit -m "chore(release): ${{ env.new_version }}" || echo "Nada para commit"
+
+      # ---------------------------
+      # 6️⃣ Criar e enviar TAG
+      # ---------------------------
+      - name: Create tag
         run: |
-          # Ensure RELEASE_NOTES.md exists
-          if [ ! -f RELEASE_NOTES.md ]; then
-            echo "Creating missing RELEASE_NOTES.md"
-            touch RELEASE_NOTES.md
-          fi
+          git tag ${{ env.new_version }} || echo "Tag já existe"
 
-          # Ensure CHANGELOG.md exists
-          if [ ! -f CHANGELOG.md ]; then
-            echo "Creating missing CHANGELOG.md"
-            touch CHANGELOG.md
-          fi
-
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "v0.0.0")
-
-          if git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
-            COMMITS=$(git log --pretty=format:"* %s" ${PREVIOUS_TAG}..HEAD)
-          else
-            COMMITS=$(git log --pretty=format:"* %s" HEAD)
-          fi
-
-          if [ -z "$COMMITS" ]; then
-            echo "No new commits found. Skipping release notes update."
-            echo "No new commits found. Skipping changelog update."
-            exit 0
-          fi
-
-          # Prepend the new version and commits to the release notes
-          echo "## ${{ env.new_version }} - $(date +'%Y-%m-%d')" > temp_RELEASE_NOTES.md
-          echo "$COMMITS" >> temp_RELEASE_NOTES.md
-
-          # Prepend the new version and commits to the changelog
-          echo "## ${{ env.new_version }} - $(date +'%Y-%m-%d')" > temp_CHANGELOG.md
-          echo "$COMMITS" >> temp_CHANGELOG.md
-
-          # Append the existing content of RELEASE_NOTES.md to the new file
-          cat RELEASE_NOTES.md >> temp_RELEASE_NOTES.md
-
-          # Append the existing content of CHANGELOG.md to the new file
-          cat CHANGELOG.md >> temp_CHANGELOG.md
-
-          # Replace the old RELEASE_NOTES.md with the new one
-          mv temp_RELEASE_NOTES.md RELEASE_NOTES.md
-
-          # Replace the old CHANGELOG.md with the new one
-          mv temp_CHANGELOG.md CHANGELOG.md
-
-          git add RELEASE_NOTES.md
-          git add CHANGELOG.md
-          
-          if git diff --cached --quiet; then
-            echo "No changes to commit in RELEASE_NOTES.md."
-            echo "No changes to commit in CHANGELOG.md."
-            exit 0
-          fi
-
-          git commit -m "chore: update release notes and changelog for ${{ env.new_version }}"
-          git push origin main
-
+      - name: Push changes and tag
+        run: |
+          git push origin HEAD
+          git push origin ${{ env.new_version }}
