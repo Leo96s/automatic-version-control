@@ -13,12 +13,12 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repo (full history)
+      - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: Fetch all tags
+      - name: Fetch tags
         run: git fetch --tags
 
       # ---------------------------
@@ -30,35 +30,34 @@ jobs:
           echo "latest_tag=$TAG" >> $GITHUB_ENV
 
       # ---------------------------
-      # 2️⃣ Commits desde a última versão
+      # 2️⃣ Commits novos
       # ---------------------------
-      - name: Collect commits
+      - name: Get commits since last tag
         run: |
           if git rev-parse "${{ env.latest_tag }}" >/dev/null 2>&1; then
-            LOG=$(git log ${{ env.latest_tag }}..HEAD --pretty=format:"%s")
+            COMMITS=$(git log --pretty=%B ${{ env.latest_tag }}..HEAD)
           else
-            LOG=$(git log HEAD --pretty=format:"%s")
+            COMMITS=$(git log --pretty=%B HEAD)
           fi
 
           echo "COMMITS<<EOF" >> $GITHUB_ENV
-          echo "$LOG" >> $GITHUB_ENV
+          echo "$COMMITS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
       # ---------------------------
       # 3️⃣ Calcular nova versão
       # ---------------------------
-      - name: Calculate new version
+      - name: Calculate version
         run: |
           VERSION=${{ env.latest_tag }}
           VERSION=${VERSION#v}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          COMMITS="${{ env.COMMITS }}"
 
           BUMP="patch"
 
-          if echo "$COMMITS" | grep -q "BREAKING CHANGE"; then
+          if echo "${{ env.COMMITS }}" | grep -q "BREAKING CHANGE"; then
             BUMP="major"
-          elif echo "$COMMITS" | grep -qE "^feat(\(.+\))?:"; then
+          elif echo "${{ env.COMMITS }}" | grep -qE "^feat(\(.+\))?:"; then
             BUMP="minor"
           fi
 
@@ -74,9 +73,17 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
 
       # ---------------------------
-      # 4️⃣ Atualizar package.json (se existir)
+      # 4️⃣ Configurar git (ANTES dos commits)
       # ---------------------------
-      - name: Update package.json
+      - name: Configure git
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+
+      # ---------------------------
+      # 5️⃣ Atualizar package.json (se existir)
+      # ---------------------------
+      - name: Update package.json if exists
         run: |
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
@@ -84,66 +91,61 @@ jobs:
           if [ -f package.json ]; then
             sudo apt-get update && sudo apt-get install -y jq
             jq ".version=\"$VERSION\"" package.json > tmp.json && mv tmp.json package.json
+            git add package.json
           fi
 
       # ---------------------------
-      # 5️⃣ Gerar CHANGELOG e RELEASE_NOTES
+      # 6️⃣ Gerar CHANGELOG + RELEASE_NOTES
       # ---------------------------
-      - name: Generate changelog files
+      - name: Generate changelog and release notes
         run: |
           DATE=$(date +'%Y-%m-%d')
           VERSION=${{ env.new_version }}
-          COMMITS="${{ env.COMMITS }}"
 
-          # Criar ficheiros se não existirem
           touch CHANGELOG.md
           touch RELEASE_NOTES.md
 
-          # Categorizar commits
-          FEATS=$(echo "$COMMITS" | grep -E "^feat" || true)
-          FIXES=$(echo "$COMMITS" | grep -E "^fix" || true)
-          OTHERS=$(echo "$COMMITS" | grep -Ev "^(feat|fix)" || true)
+          PREVIOUS_TAG=${{ env.latest_tag }}
 
-          {
-            echo "## $VERSION - $DATE"
-            echo ""
-            [ ! -z "$FEATS" ] && echo "### 🚀 Features" && echo "$FEATS" | sed 's/^/- /' && echo ""
-            [ ! -z "$FIXES" ] && echo "### 🐛 Fixes" && echo "$FIXES" | sed 's/^/- /' && echo ""
-            [ ! -z "$OTHERS" ] && echo "### 🔧 Others" && echo "$OTHERS" | sed 's/^/- /'
-            echo ""
-          } > NEW_CHANGELOG.md
+          if git rev-parse "$PREVIOUS_TAG" >/dev/null 2>&1; then
+            LOG=$(git log --pretty=format:"* %s" ${PREVIOUS_TAG}..HEAD)
+          else
+            LOG=$(git log --pretty=format:"* %s" HEAD)
+          fi
 
-          cat CHANGELOG.md >> NEW_CHANGELOG.md
-          mv NEW_CHANGELOG.md CHANGELOG.md
+          if [ -z "$LOG" ]; then
+            echo "No commits to add"
+            exit 0
+          fi
 
-          {
-            echo "# Release $VERSION"
-            echo ""
-            echo "$COMMITS" | sed 's/^/- /'
-            echo ""
-          } > RELEASE_NOTES.md
+          echo "## $VERSION - $DATE" > temp_CHANGELOG.md
+          echo "$LOG" >> temp_CHANGELOG.md
+          cat CHANGELOG.md >> temp_CHANGELOG.md
+          mv temp_CHANGELOG.md CHANGELOG.md
+
+          echo "## $VERSION - $DATE" > temp_RELEASE_NOTES.md
+          echo "$LOG" >> temp_RELEASE_NOTES.md
+          cat RELEASE_NOTES.md >> temp_RELEASE_NOTES.md
+          mv temp_RELEASE_NOTES.md RELEASE_NOTES.md
+
+          git add CHANGELOG.md RELEASE_NOTES.md
 
       # ---------------------------
-      # 6️⃣ Commit automático
+      # 7️⃣ Commit automático (IGUAL AO TEU ORIGINAL)
       # ---------------------------
-      - name: Commit version + changelog
+      - name: Commit release files
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-
-          git add package.json CHANGELOG.md RELEASE_NOTES.md 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }}"
-
-      # ---------------------------
-      # 7️⃣ Criar tag
-      # ---------------------------
-      - name: Create tag
-        run: git tag ${{ env.new_version }} || echo "Tag exists"
+          if git diff --cached --quiet; then
+            echo "Nada para commit"
+          else
+            git commit -m "chore(release): ${{ env.new_version }}"
+            git push origin HEAD
+          fi
 
       # ---------------------------
-      # 8️⃣ Push tudo
+      # 8️⃣ Criar tag no final
       # ---------------------------
-      - name: Push changes
+      - name: Create and push tag
         run: |
-          git push origin HEAD
+          git tag ${{ env.new_version }} || echo "Tag exists"
           git push origin ${{ env.new_version }}
