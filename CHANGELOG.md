@@ -1,3 +1,5 @@
+## v0.0.5 - 2026-02-01
+* ci: mais uma tentativa
 ## v0.0.4 - 2026-02-01
 * ci: nova tentativa
 ## v0.0.1 - 2026-01-31
