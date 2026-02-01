@@ -1,3 +1,5 @@
+## v1.0.1 - 2026-02-01
+* chore(release): v1.0.0
 ## v1.0.0 - 2026-02-01
 * BREAKING CHANGE: teste se funciona
 * chore(release): v0.1.0
