@@ -112,6 +112,13 @@ jobs:
             echo "Updating $FILE version to $VERSION"
             jq ".version=\"$VERSION\"" "$FILE" > tmp.json && mv tmp.json "$FILE"
             git add "$FILE"
+
+            # Atualiza package-lock.json correspondente
+            DIR=$(dirname "$FILE")
+            cd "$DIR"
+            npm install --package-lock-only
+            git add package-lock.json
+            cd - > /dev/null
           done
 
       # CHANGELOG
