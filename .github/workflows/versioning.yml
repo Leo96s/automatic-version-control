@@ -19,43 +19,41 @@ jobs:
 
       - run: git fetch --tags
 
-      # Última tag existente
+      # Última tag
       - name: Get latest tag
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "latest_tag=$TAG" >> $GITHUB_ENV
 
-      # Config Git
       - name: Git config
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
 
-      # 🔥 REPLAY REAL DE VERSÕES
+      # REPLAY REAL DAS VERSÕES (por commit)
       - name: Replay versions per commit
         run: |
           CURRENT_TAG=${{ env.latest_tag }}
           VERSION=${CURRENT_TAG#v}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
-          echo "Starting from $CURRENT_TAG"
-
           git log --reverse --pretty="%H|%s" $CURRENT_TAG..HEAD > commits.txt
 
           CREATED_TAGS=0
 
           while IFS='|' read -r SHA MSG; do
+            MSG_LOWER=$(echo "$MSG" | tr '[:upper:]' '[:lower:]')
             NEW_VERSION=""
 
-            if [[ "$MSG" == *"BREAKING CHANGE"* ]]; then
+            if [[ "$MSG_LOWER" == *"breaking change"* ]]; then
               MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
 
-            elif [[ "$MSG" =~ ^feat(\(.+\))?: ]]; then
+            elif [[ "$MSG_LOWER" =~ ^feat(\(.+\))?: ]]; then
               MINOR=$((MINOR+1)); PATCH=0
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
 
-            elif [[ "$MSG" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
+            elif [[ "$MSG_LOWER" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
               PATCH=$((PATCH+1))
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
             fi
@@ -78,12 +76,11 @@ jobs:
           echo "new_version=$FINAL_VERSION" >> $GITHUB_ENV
           echo "created_tags=$CREATED_TAGS" >> $GITHUB_ENV
 
-      # Se não houve novas versões, parar
-      - name: Stop if nothing changed
+      - name: Stop if no new versions
         if: env.created_tags == '0'
-        run: echo "No versionable commits found."
+        run: echo "No versionable commits."
 
-      # Atualizar package.json e package-lock.json
+      #  package.json + lock com as versões atualizadas
       - name: Update package.json files
         if: env.created_tags == '1'
         run: |
@@ -100,7 +97,6 @@ jobs:
           sudo apt-get update && sudo apt-get install -y jq npm
 
           for FILE in $FILES; do
-            echo "Updating $FILE to $VERSION"
             jq ".version=\"$VERSION\"" "$FILE" > tmp.json && mv tmp.json "$FILE"
             git add "$FILE"
 
@@ -111,7 +107,7 @@ jobs:
             cd - > /dev/null
           done
 
-      # CHANGELOG + RELEASE NOTES
+      # CHANGELOG LIMPO
       - name: Update changelog
         if: env.created_tags == '1'
         run: |
@@ -120,14 +116,13 @@ jobs:
 
           touch CHANGELOG.md RELEASE_NOTES.md
 
-          # Só commits semânticos válidos
           LOG=$(git log ${{ env.latest_tag }}..HEAD \
             --pretty=format:"%s" \
             --no-merges | \
-            grep -E "^(feat|fix|docs|style|test|ci)(\(.+\))?:|BREAKING CHANGE" || true)
+            grep -Ei "^(feat|fix|docs|style|test|ci)(\(.+\))?:|breaking change" || true)
 
           if [ -z "$LOG" ]; then
-            echo "No valid commits for changelog."
+            echo "No valid commits."
             exit 0
           fi
 
@@ -145,8 +140,7 @@ jobs:
 
           git add CHANGELOG.md RELEASE_NOTES.md
 
-
-      # Commit automático
+      # Commit automático do bot
       - name: Commit release updates
         if: env.created_tags == '1'
         run: |
