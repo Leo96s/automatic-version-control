@@ -1,3 +1,8 @@
+## v1.1.13 - 2026-02-02
+* feat: teste 3
+* fix: teste 2
+* fix: teste 1
+* chore(release): v1.0.11
 ## v1.0.11 - 2026-02-02
 * fix: nova versão de versioning control
 * chore(release): v1.0.10
