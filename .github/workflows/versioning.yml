@@ -119,19 +119,32 @@ jobs:
           VERSION=${{ env.new_version }}
 
           touch CHANGELOG.md RELEASE_NOTES.md
-          LOG=$(git log --pretty=format:"* %s" ${{ env.latest_tag }}..HEAD)
+
+          # Só commits semânticos válidos
+          LOG=$(git log ${{ env.latest_tag }}..HEAD \
+            --pretty=format:"%s" \
+            --no-merges | \
+            grep -E "^(feat|fix|docs|style|test|ci)(\(.+\))?:|BREAKING CHANGE" || true)
+
+          if [ -z "$LOG" ]; then
+            echo "No valid commits for changelog."
+            exit 0
+          fi
+
+          LOG_FORMATTED=$(echo "$LOG" | sed 's/^/* /')
 
           echo "## $VERSION - $DATE" > tmp1.md
-          echo "$LOG" >> tmp1.md
+          echo "$LOG_FORMATTED" >> tmp1.md
           cat CHANGELOG.md >> tmp1.md
           mv tmp1.md CHANGELOG.md
 
           echo "## $VERSION - $DATE" > tmp2.md
-          echo "$LOG" >> tmp2.md
+          echo "$LOG_FORMATTED" >> tmp2.md
           cat RELEASE_NOTES.md >> tmp2.md
           mv tmp2.md RELEASE_NOTES.md
 
           git add CHANGELOG.md RELEASE_NOTES.md
+
 
       # Commit automático
       - name: Commit release updates
