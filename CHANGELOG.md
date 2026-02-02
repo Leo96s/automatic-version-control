@@ -1,3 +1,7 @@
+## v1.1.14 - 2026-02-02
+* Merge branch 'dev' of https://github.com/Leo96s/automatic-version-control into dev
+* fix: resolvido um pequeno bug
+* chore(release): v1.1.13
 ## v1.1.13 - 2026-02-02
 * feat: teste 3
 * fix: teste 2
