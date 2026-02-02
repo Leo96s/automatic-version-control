@@ -19,111 +19,91 @@ jobs:
 
       - run: git fetch --tags
 
-      # Última tag
+      # Última tag existente
       - name: Get latest tag
-        id: tag
         run: |
           TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "latest_tag=$TAG" >> $GITHUB_ENV
 
-      # Commits desde última versão
-      - name: Collect commits
-        id: commits
-        run: |
-          RANGE="${{ env.latest_tag }}..HEAD"
-          git log --pretty="%H|%s" $RANGE > commits.txt || true
-
-      # Determinar bump + commit correto
-      - name: Analyze commits (cumulative)
-        id: analyze
-        run: |
-          PATCH_COUNT=0
-          MINOR_COUNT=0
-          MAJOR_COUNT=0
-
-          while IFS='|' read -r SHA MSG; do
-            if [[ "$MSG" == *"BREAKING CHANGE"* ]]; then
-              MAJOR_COUNT=$((MAJOR_COUNT+1))
-            elif [[ "$MSG" =~ ^feat(\(.+\))?: ]]; then
-              MINOR_COUNT=$((MINOR_COUNT+1))
-            elif [[ "$MSG" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
-              PATCH_COUNT=$((PATCH_COUNT+1))
-            fi
-          done < commits.txt
-
-          echo "patch_count=$PATCH_COUNT" >> $GITHUB_ENV
-          echo "minor_count=$MINOR_COUNT" >> $GITHUB_ENV
-          echo "major_count=$MAJOR_COUNT" >> $GITHUB_ENV
-
-          if [ "$PATCH_COUNT" -eq 0 ] && [ "$MINOR_COUNT" -eq 0 ] && [ "$MAJOR_COUNT" -eq 0 ]; then
-            echo "bump=none" >> $GITHUB_ENV
-          else
-            echo "bump=yes" >> $GITHUB_ENV
-          fi
-
-      # Parar tudo se não houver bump
-      - name: Stop if no version change
-        if: env.bump == 'none'
-        run: echo "No versionable commits — stopping."
-
-      # Calcular nova versão
-      - name: Calculate new version
-        if: env.bump == 'yes'
-        run: |
-          VERSION=${{ env.latest_tag }}
-          VERSION=${VERSION#v}
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
-          if [ "${{ env.major_count }}" -gt 0 ]; then
-            MAJOR=$((MAJOR + ${{ env.major_count }}))
-            MINOR=0
-            PATCH=0
-          else
-            MINOR=$((MINOR + ${{ env.minor_count }}))
-            PATCH=$((PATCH + ${{ env.patch_count }}))
-          fi
-
-          NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
-          echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
-
-
-      # Configurar git
+      # Config Git
       - name: Git config
-        if: env.bump != 'none'
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
 
-      # TAG NO COMMIT CERTO
-      - name: Tag correct commit
-        if: env.bump != 'none'
+      # 🔥 REPLAY REAL DE VERSÕES
+      - name: Replay versions per commit
         run: |
-          git tag ${{ env.new_version }} ${{ env.target_sha }}
-          git push origin ${{ env.new_version }}
+          CURRENT_TAG=${{ env.latest_tag }}
+          VERSION=${CURRENT_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
-      # package.json
-      - name: Update package.json
-        if: env.bump != 'none'
+          echo "Starting from $CURRENT_TAG"
+
+          git log --reverse --pretty="%H|%s" $CURRENT_TAG..HEAD > commits.txt
+
+          CREATED_TAGS=0
+
+          while IFS='|' read -r SHA MSG; do
+            NEW_VERSION=""
+
+            if [[ "$MSG" == *"BREAKING CHANGE"* ]]; then
+              MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
+              NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+
+            elif [[ "$MSG" =~ ^feat(\(.+\))?: ]]; then
+              MINOR=$((MINOR+1)); PATCH=0
+              NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+
+            elif [[ "$MSG" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
+              PATCH=$((PATCH+1))
+              NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+            fi
+
+            if [ -n "$NEW_VERSION" ]; then
+              if git rev-parse "$NEW_VERSION" >/dev/null 2>&1; then
+                echo "Tag $NEW_VERSION already exists"
+              else
+                echo "Tagging $SHA as $NEW_VERSION"
+                git tag "$NEW_VERSION" "$SHA"
+                CREATED_TAGS=1
+              fi
+            fi
+
+          done < commits.txt
+
+          git push origin --tags
+
+          FINAL_VERSION="v$MAJOR.$MINOR.$PATCH"
+          echo "new_version=$FINAL_VERSION" >> $GITHUB_ENV
+          echo "created_tags=$CREATED_TAGS" >> $GITHUB_ENV
+
+      # Se não houve novas versões, parar
+      - name: Stop if nothing changed
+        if: env.created_tags == '0'
+        run: echo "No versionable commits found."
+
+      # Atualizar package.json e package-lock.json
+      - name: Update package.json files
+        if: env.created_tags == '1'
         run: |
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
 
-          # Procurar todos os package.json
           FILES=$(find . -name package.json)
 
           if [ -z "$FILES" ]; then
-            echo "No package.json found, skipping."
+            echo "No package.json found."
             exit 0
           fi
 
-          sudo apt-get update && sudo apt-get install -y jq
+          sudo apt-get update && sudo apt-get install -y jq npm
 
           for FILE in $FILES; do
-            echo "Updating $FILE version to $VERSION"
+            echo "Updating $FILE to $VERSION"
             jq ".version=\"$VERSION\"" "$FILE" > tmp.json && mv tmp.json "$FILE"
             git add "$FILE"
 
-            # Atualiza package-lock.json correspondente
             DIR=$(dirname "$FILE")
             cd "$DIR"
             npm install --package-lock-only
@@ -131,9 +111,9 @@ jobs:
             cd - > /dev/null
           done
 
-      # CHANGELOG
+      # CHANGELOG + RELEASE NOTES
       - name: Update changelog
-        if: env.bump != 'none'
+        if: env.created_tags == '1'
         run: |
           DATE=$(date +'%Y-%m-%d')
           VERSION=${{ env.new_version }}
@@ -154,8 +134,8 @@ jobs:
           git add CHANGELOG.md RELEASE_NOTES.md
 
       # Commit automático
-      - name: Commit release files
-        if: env.bump != 'none'
+      - name: Commit release updates
+        if: env.created_tags == '1'
         run: |
           git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }}"
           git push origin HEAD
