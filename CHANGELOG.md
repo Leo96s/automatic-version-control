@@ -1,3 +1,5 @@
+## v1.2.1 - 2026-02-02
+* fix: corrigido bug do versioning
 ## v1.2.0 - 2026-02-02
 * Merge branch 'test' into dev
 * feat: teste 3
