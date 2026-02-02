@@ -34,24 +34,32 @@ jobs:
           git log --pretty="%H|%s" $RANGE > commits.txt || true
 
       # Determinar bump + commit correto
-      - name: Analyze commits
+      - name: Analyze commits (cumulative)
         id: analyze
         run: |
-          BUMP="none"
-          TARGET_SHA=""
+          PATCH_COUNT=0
+          MINOR_COUNT=0
+          MAJOR_COUNT=0
 
           while IFS='|' read -r SHA MSG; do
             if [[ "$MSG" == *"BREAKING CHANGE"* ]]; then
-              BUMP="major"; TARGET_SHA=$SHA; break
+              MAJOR_COUNT=$((MAJOR_COUNT+1))
             elif [[ "$MSG" =~ ^feat(\(.+\))?: ]]; then
-              BUMP="minor"; TARGET_SHA=$SHA; break
+              MINOR_COUNT=$((MINOR_COUNT+1))
             elif [[ "$MSG" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
-              BUMP="patch"; TARGET_SHA=$SHA; break
+              PATCH_COUNT=$((PATCH_COUNT+1))
             fi
           done < commits.txt
 
-          echo "bump=$BUMP" >> $GITHUB_ENV
-          echo "target_sha=$TARGET_SHA" >> $GITHUB_ENV
+          echo "patch_count=$PATCH_COUNT" >> $GITHUB_ENV
+          echo "minor_count=$MINOR_COUNT" >> $GITHUB_ENV
+          echo "major_count=$MAJOR_COUNT" >> $GITHUB_ENV
+
+          if [ "$PATCH_COUNT" -eq 0 ] && [ "$MINOR_COUNT" -eq 0 ] && [ "$MAJOR_COUNT" -eq 0 ]; then
+            echo "bump=none" >> $GITHUB_ENV
+          else
+            echo "bump=yes" >> $GITHUB_ENV
+          fi
 
       # Parar tudo se não houver bump
       - name: Stop if no version change
@@ -60,22 +68,24 @@ jobs:
 
       # Calcular nova versão
       - name: Calculate new version
-        if: env.bump != 'none'
+        if: env.bump == 'yes'
         run: |
           VERSION=${{ env.latest_tag }}
           VERSION=${VERSION#v}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
 
-          if [ "${{ env.bump }}" = "major" ]; then
-            MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
-          elif [ "${{ env.bump }}" = "minor" ]; then
-            MINOR=$((MINOR+1)); PATCH=0
+          if [ "${{ env.major_count }}" -gt 0 ]; then
+            MAJOR=$((MAJOR + ${{ env.major_count }}))
+            MINOR=0
+            PATCH=0
           else
-            PATCH=$((PATCH+1))
+            MINOR=$((MINOR + ${{ env.minor_count }}))
+            PATCH=$((PATCH + ${{ env.patch_count }}))
           fi
 
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
+
 
       # Configurar git
       - name: Git config
