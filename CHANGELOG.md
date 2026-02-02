@@ -1,3 +1,11 @@
+## v1.2.0 - 2026-02-02
+* Merge branch 'test' into dev
+* feat: teste 3
+* fix: teste 2
+* fix: teste 1
+* chore(release): v1.1.14
+* Merge branch 'dev' of https://github.com/Leo96s/automatic-version-control into dev
+* chore(release): v1.1.13
 ## v1.1.14 - 2026-02-02
 * Merge branch 'dev' of https://github.com/Leo96s/automatic-version-control into dev
 * fix: resolvido um pequeno bug
