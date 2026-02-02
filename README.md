@@ -1,13 +1,14 @@
-**Descrição do Projeto**
+**Project Description**
 
-Este projeto implementa um sistema de **versionamento semântico automático** baseado em mensagens de commit, utilizando GitHub Actions. A cada alteração enviada para as branches principais, o workflow analisa o histórico de commits e:
+This project implements an **automatic semantic versioning** system based on commit messages, using GitHub Actions. With each change sent to the main branches, the workflow analyses the commit history and:
 
-* Incrementa a versão seguindo o padrão **Semantic Versioning (SemVer)**
-* Cria **tags retroativas** no commit correto
-* Atualiza automaticamente o **package.json** e **package-lock.json** (mesmo em subpastas)
-* Gera e mantém atualizados os ficheiros **CHANGELOG.md** e **RELEASE_NOTES.md**
-* Ignora commits de merge, commits do bot e mensagens sem prefixos semânticos
+* Increments the version following the **Semantic Versioning (SemVer)** standard
+* Creates **retroactive tags** on the correct commit
+* Automatically updates **package.json** and **package-lock.json** (even in subfolders)
+* Generates and keeps **CHANGELOG.md** and **RELEASE_NOTES.md** files up to date
+* Ignores merge commits, bot commits, and messages without semantic prefixes
 
-O sistema suporta commits feitos fora das branches controladas e reconstrói corretamente o histórico de versões quando estes são integrados, garantindo um controlo de versões consistente, automatizado e confiável.
+The system supports commits made outside of controlled branches and correctly reconstructs the version history when they are integrated, ensuring consistent, automated, and reliable version control.
+
 
 ---
