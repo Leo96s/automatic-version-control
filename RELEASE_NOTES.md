@@ -1,3 +1,8 @@
+## v2.0.0 - 2026-02-02
+* BREAKING CHANGE: teste 4
+* feat: teste 3
+* fix: teste 2
+* fix: teste 1
 ## v1.2.1 - 2026-02-02
 * fix: corrigido bug do versioning
 ## v1.2.0 - 2026-02-02
