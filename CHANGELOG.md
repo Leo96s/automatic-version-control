@@ -1,3 +1,5 @@
+## v2.1.1 - 2026-04-09
+* ci: atualizado o ficheiro para uma versão mais estável
 ## v2.1.0 - 2026-02-02
 * feat: versão final do versioning
 ## v2.0.0 - 2026-02-02
