@@ -1,6 +1,6 @@
 {
   "name": "automatic-version-control",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "private": true,
   "description": "Automatic semantic versioning system based on commit messages, using GitHub Actions.",
   "scripts": {
