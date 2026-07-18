@@ -1,0 +1,2 @@
+node scripts/pre-commit-checks.js || exit 1
+npx lint-staged

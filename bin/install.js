@@ -12,6 +12,9 @@ const DEV_DEPENDENCIES = {
   husky: '^9.1.7',
   '@commitlint/cli': '^19.0.0',
   '@commitlint/config-conventional': '^19.0.0',
+  'lint-staged': '^16.4.0',
+  secretlint: '^13.0.2',
+  '@secretlint/secretlint-rule-preset-recommend': '^13.0.2',
 };
 
 function log(msg) {
@@ -112,17 +115,29 @@ function restorePrepareScript(desiredPrepare) {
   }
 }
 
-function setupHuskyCommitMsgHook() {
+function setupHuskyHooks() {
   ensureDir(path.join(targetRoot, '.husky'));
   run('npx husky init');
 
-  const preCommitSample = path.join(targetRoot, '.husky/pre-commit');
-  if (fs.existsSync(preCommitSample) && fs.readFileSync(preCommitSample, 'utf8').trim() === 'npm test') {
-    fs.rmSync(preCommitSample);
+  const preCommitPath = path.join(targetRoot, '.husky/pre-commit');
+  const preCommitIsHuskySample = fs.existsSync(preCommitPath) && fs.readFileSync(preCommitPath, 'utf8').trim() === 'npm test';
+
+  if (preCommitIsHuskySample) {
+    fs.rmSync(preCommitPath);
   }
 
   fs.writeFileSync(path.join(targetRoot, '.husky/commit-msg'), 'npx --no -- commitlint --edit "$1"\n');
   log('OK   .husky/commit-msg');
+
+  if (fs.existsSync(preCommitPath) && !preCommitIsHuskySample) {
+    log('SKIP .husky/pre-commit (já existe e parece ter sido personalizado — adiciona manualmente:)');
+    log('       node scripts/pre-commit-checks.js || exit 1');
+    log('       npx lint-staged');
+    return;
+  }
+
+  fs.writeFileSync(path.join(targetRoot, '.husky/pre-commit'), 'node scripts/pre-commit-checks.js || exit 1\nnpx lint-staged\n');
+  log('OK   .husky/pre-commit');
 }
 
 function main() {
@@ -133,13 +148,16 @@ function main() {
 
   copyIfAbsent('.github/workflows/versioning.yml');
   copyIfAbsent('commitlint.config.js');
+  copyIfAbsent('.secretlintrc.json');
+  copyIfAbsent('.lintstagedrc.json');
+  copyIfAbsent('scripts/pre-commit-checks.js');
   ensureGitignoreHasNodeModules();
   const desiredPrepare = mergePackageJson();
 
   log('A correr npm install...');
   run('npm install');
 
-  setupHuskyCommitMsgHook();
+  setupHuskyHooks();
   restorePrepareScript(desiredPrepare);
 
   log('');
