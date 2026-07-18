@@ -29,15 +29,16 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function copyIfAbsent(relPath) {
+// Estes ficheiros sao inteiramente geridos por este pacote (o utilizador nao
+// costuma personaliza-los), por isso sao sempre substituidos pela versao mais
+// recente - isto e o que garante que um projeto com um versioning.yml antigo
+// fica atualizado ao correr o instalador de novo.
+function copyTemplateFile(relPath) {
   const dest = path.join(targetRoot, relPath);
-  if (fs.existsSync(dest)) {
-    log(`SKIP ${relPath} (já existe — revê manualmente se necessário)`);
-    return;
-  }
+  const existedBefore = fs.existsSync(dest);
   ensureDir(path.dirname(dest));
   fs.copyFileSync(path.join(templateRoot, relPath), dest);
-  log(`OK   ${relPath}`);
+  log(existedBefore ? `OK   ${relPath} (substituído pela versão mais recente)` : `OK   ${relPath}`);
 }
 
 function ensureGitignoreHasNodeModules() {
@@ -146,11 +147,11 @@ function main() {
     process.exit(1);
   }
 
-  copyIfAbsent('.github/workflows/versioning.yml');
-  copyIfAbsent('commitlint.config.js');
-  copyIfAbsent('.secretlintrc.json');
-  copyIfAbsent('.lintstagedrc.json');
-  copyIfAbsent('scripts/pre-commit-checks.js');
+  copyTemplateFile('.github/workflows/versioning.yml');
+  copyTemplateFile('commitlint.config.js');
+  copyTemplateFile('.secretlintrc.json');
+  copyTemplateFile('.lintstagedrc.json');
+  copyTemplateFile('scripts/pre-commit-checks.js');
   ensureGitignoreHasNodeModules();
   const desiredPrepare = mergePackageJson();
 
