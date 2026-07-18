@@ -6,6 +6,10 @@ on:
       - main
       - dev
 
+concurrency:
+  group: semantic-versioning
+  cancel-in-progress: false
+
 jobs:
   versioning:
     runs-on: ubuntu-latest
@@ -13,7 +17,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -102,8 +106,8 @@ jobs:
           VERSION=${{ env.new_version }}
           VERSION=${VERSION#v}
 
-          # Encontra todos os package.json
-          FILES=$(find . -name package.json -not -path "*/node_modules/*")
+          # Encontra todos os package.json rastreados pelo git (ignora node_modules e ficheiros não versionados)
+          FILES=$(git ls-files -- '*package.json' ':!:**/node_modules/**')
 
           if [ -z "$FILES" ]; then
             echo "No package.json found."
@@ -111,17 +115,12 @@ jobs:
           fi
 
           for FILE in $FILES; do
-            # O jq já vem pré-instalado no ubuntu-latest, não precisa de apt-get
-            jq ".version=\"$VERSION\"" "$FILE" > tmp.json && mv tmp.json "$FILE"
-            git add "$FILE"
-
             DIR=$(dirname "$FILE")
 
-            # Entra no diretório, atualiza apenas o lock sem disparar scripts de install
-            cd "$DIR"
-            npm install --package-lock-only --legacy-peer-deps
-            git add package-lock.json
-            cd - > /dev/null
+            # npm version atualiza package.json e package-lock.json de forma atómica,
+            # sem re-resolver todo o grafo de dependências
+            (cd "$DIR" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+            git add "$FILE" "$DIR/package-lock.json"
           done
 
       # CHANGELOG LIMPO
@@ -156,10 +155,9 @@ jobs:
           cat CHANGELOG.md >> tmp1.md
           mv tmp1.md CHANGELOG.md
 
-          echo "## $VERSION - $DATE" > tmp2.md
-          echo "$LOG_FORMATTED" >> tmp2.md
-          cat RELEASE_NOTES.md >> tmp2.md
-          mv tmp2.md RELEASE_NOTES.md
+          # RELEASE_NOTES.md contém apenas as notas desta versão (usado na GitHub Release)
+          echo "## $VERSION - $DATE" > RELEASE_NOTES.md
+          echo "$LOG_FORMATTED" >> RELEASE_NOTES.md
 
           git add CHANGELOG.md RELEASE_NOTES.md
 
@@ -168,8 +166,9 @@ jobs:
         if: env.created_tags == '1'
         run: |
           # 1. Faz commit das alterações nos ficheiros (package.json, changelog)
-          git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }}"
-          
+          # [skip ci] evita que este commit volte a acionar o workflow
+          git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }} [skip ci]"
+
           # 2. Empurra o commit para a branch (main/dev)
           git push origin HEAD
 
@@ -178,6 +177,16 @@ jobs:
           for tag in $(git tag --points-at HEAD); do
             git push origin "$tag" || echo "Tag $tag rejeitada (provavelmente contém alteração de workflow). Ignorando..."
           done
-          
+
           # Tenta empurrar as outras tags criadas no replay (opcional)
           git push origin --tags || echo "Algumas tags foram rejeitadas, mas o processo continuou."
+
+      # Publica a Release no GitHub com as notas da versão atual
+      - name: Create GitHub Release
+        if: env.created_tags == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ env.new_version }}" \
+            --title "${{ env.new_version }}" \
+            --notes-file RELEASE_NOTES.md
