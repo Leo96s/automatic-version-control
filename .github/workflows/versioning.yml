@@ -59,6 +59,12 @@ jobs:
             MSG_LOWER=$(echo "$MSG" | tr '[:upper:]' '[:lower:]')
             NEW_VERSION=""
 
+            # Ignora os proprios commits de release do bot (chore(release): vX.Y.Z),
+            # para nao gerarem um bump extra so por conterem o prefixo "chore:"
+            if [[ "$MSG_LOWER" =~ ^chore\(release\): ]]; then
+              continue
+            fi
+
             if [[ "$MSG_LOWER" == *"breaking change"* ]]; then
               MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
@@ -142,7 +148,8 @@ jobs:
           LOG=$(git log $RANGE \
             --pretty=format:"%s" \
             --no-merges | \
-            grep -Ei "^(feat|fix|docs|style|test|ci|chore|refactor|perf|build|revert)(\(.+\))?:|breaking change" || true)
+            grep -Ei "^(feat|fix|docs|style|test|ci|chore|refactor|perf|build|revert)(\(.+\))?:|breaking change" | \
+            grep -Eiv "^chore\(release\):" || true)
 
           if [ -z "$LOG" ]; then
             echo "No valid commits."
