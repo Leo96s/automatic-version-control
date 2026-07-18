@@ -67,7 +67,7 @@ jobs:
               MINOR=$((MINOR+1)); PATCH=0
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
 
-            elif [[ "$MSG_LOWER" =~ ^(fix|docs|style|test|ci)(\(.+\))?: ]]; then
+            elif [[ "$MSG_LOWER" =~ ^(fix|docs|style|test|ci|chore|refactor|perf|build|revert)(\(.+\))?: ]]; then
               PATCH=$((PATCH+1))
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
             fi
@@ -142,7 +142,7 @@ jobs:
           LOG=$(git log $RANGE \
             --pretty=format:"%s" \
             --no-merges | \
-            grep -Ei "^(feat|fix|docs|style|test|ci)(\(.+\))?:|breaking change" || true)
+            grep -Ei "^(feat|fix|docs|style|test|ci|chore|refactor|perf|build|revert)(\(.+\))?:|breaking change" || true)
 
           if [ -z "$LOG" ]; then
             echo "No valid commits."
