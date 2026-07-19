@@ -1,2 +1,2 @@
-## v2.4.2 - 2026-07-18
-* fix: atualiza checkout para v5 e corrige instalador para sempre substituir ficheiros do template
+## v2.4.3 - 2026-07-19
+* docs: atualiza README com informação completa e atual do projeto

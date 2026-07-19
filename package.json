@@ -1,6 +1,6 @@
 {
   "name": "automatic-version-control",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "private": true,
   "description": "Automatic semantic versioning system based on commit messages, using GitHub Actions.",
   "bin": "bin/install.js",
