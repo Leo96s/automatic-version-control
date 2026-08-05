@@ -25,16 +25,18 @@ function run(cmd) {
   execSync(cmd, { cwd: targetRoot, stdio: 'inherit' });
 }
 
-// Grava o commit SHA deste próprio pacote (o clone temporário que o npx
-// acabou de fazer) no repositório de destino, para uma ferramenta externa
-// (ex. um hook) conseguir saber, sem adivinhar por diff de conteúdo, se o
-// que está instalado corresponde à última versão do main.
+// Grava a versão deste próprio pacote (lida do seu package.json, já
+// commitado — nunca requer .git no clone temporário do npx, que nem
+// sempre está presente consoante como o npm resolveu a dependência
+// GitHub) no repositório de destino, para uma ferramenta externa (ex. um
+// hook) conseguir saber se o que está instalado é a versão mais recente.
 function writeVersionMarker() {
-  const res = execSync('git rev-parse HEAD', { cwd: templateRoot, encoding: 'utf8' }).trim();
+  const templatePkg = JSON.parse(fs.readFileSync(path.join(templateRoot, 'package.json'), 'utf8'));
+  const version = templatePkg.version;
   const dest = path.join(targetRoot, '.github', 'automatic-version-control.version');
   ensureDir(path.dirname(dest));
-  fs.writeFileSync(dest, `${res}\n`);
-  log(`OK   .github/automatic-version-control.version (${res.slice(0, 12)})`);
+  fs.writeFileSync(dest, `${version}\n`);
+  log(`OK   .github/automatic-version-control.version (${version})`);
 }
 
 function ensureDir(dir) {
