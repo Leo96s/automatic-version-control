@@ -130,6 +130,53 @@ jobs:
             git add "$FILE" "$DIR/package-lock.json"
           done
 
+      # Mesma ideia que o passo acima, mas para projetos Kotlin/Android
+      # (build.gradle.kts) e Flutter (pubspec.yaml) — só um de cada por
+      # repositório (mesma convenção do mobile-release.yml: procura na
+      # raiz e nas subpastas de primeiro nível, para na primeira que
+      # encontrar).
+      - name: Update Kotlin/Flutter version files
+        if: env.created_tags == '1'
+        run: |
+          VERSION=${{ env.new_version }}
+          VERSION=${VERSION#v}
+
+          shopt -s nullglob
+
+          for d in . */; do
+            d="${d%/}"
+            if [ -f "$d/gradlew" ]; then
+              GRADLE_FILE=$(find "$d" -maxdepth 3 \( -name "build.gradle.kts" -o -name "build.gradle" \) \
+                -not -path "*/build/*" -not -path "*/.gradle/*" \
+                -exec grep -l "versionCode" {} \; | head -1)
+
+              if [ -n "$GRADLE_FILE" ]; then
+                CURRENT_CODE=$(grep -oE 'versionCode = [0-9]+' "$GRADLE_FILE" | grep -oE '[0-9]+')
+                if [ -n "$CURRENT_CODE" ]; then
+                  NEW_CODE=$((CURRENT_CODE + 1))
+                  sed -i -E "s/versionCode = [0-9]+/versionCode = $NEW_CODE/" "$GRADLE_FILE"
+                fi
+                sed -i -E "s/versionName = \"[^\"]*\"/versionName = \"$VERSION\"/" "$GRADLE_FILE"
+                git add "$GRADLE_FILE"
+                echo "Updated $GRADLE_FILE (versionName=$VERSION)"
+              fi
+              break
+            fi
+          done
+
+          for d in . */; do
+            d="${d%/}"
+            PUBSPEC="$d/pubspec.yaml"
+            if [ -f "$PUBSPEC" ] && [ -d "$d/android" ] && grep -q "^flutter:" "$PUBSPEC"; then
+              CURRENT_BUILD=$(grep -oE '^version: [0-9]+\.[0-9]+\.[0-9]+\+[0-9]+' "$PUBSPEC" | grep -oE '[0-9]+$')
+              NEW_BUILD=$(( ${CURRENT_BUILD:-0} + 1 ))
+              sed -i -E "s/^version: .*/version: $VERSION+$NEW_BUILD/" "$PUBSPEC"
+              git add "$PUBSPEC"
+              echo "Updated $PUBSPEC (version=$VERSION+$NEW_BUILD)"
+              break
+            fi
+          done
+
       # CHANGELOG LIMPO
       - name: Update changelog
         if: env.created_tags == '1'

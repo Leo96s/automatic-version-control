@@ -30,7 +30,8 @@ Depois de calcular a nova versão, o workflow:
 
 1. Cria a tag `vX.Y.Z` no commit correspondente
 2. Atualiza todos os `package.json`/`package-lock.json` rastreados pelo git
-3. Acrescenta uma secção nova ao `CHANGELOG.md` e reescreve o `RELEASE_NOTES.md` com as notas da versão atual
+3. Se detetar um projeto Kotlin/Android (`build.gradle.kts`/`build.gradle` com `versionCode`) ou Flutter (`pubspec.yaml`), atualiza também `versionName`/`version` para `X.Y.Z` e incrementa `versionCode`/o número de build em 1 — só um de cada por repositório, mesma deteção do [`mobile-release.yml`](#build--release-de-apk-kotlinflutter)
+4. Acrescenta uma secção nova ao `CHANGELOG.md` e reescreve o `RELEASE_NOTES.md` com as notas da versão atual
 4. Faz commit (`chore(release): vX.Y.Z [skip ci]`), push do commit e das tags, e cria a Release no GitHub
 
 ## Instalação noutro repositório
