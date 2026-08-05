@@ -1,2 +1,3 @@
-## v2.6.2 - 2026-08-05
-* fix(mobile-release): only install for mobile repos, skip build when unchanged
+## v2.7.0 - 2026-08-05
+* feat(install): write installed commit SHA as a version marker
+* fix(mobile-release): exclude .github from the change-diff check
