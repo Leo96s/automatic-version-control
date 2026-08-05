@@ -1,3 +1,6 @@
+## v2.6.0 - 2026-08-05
+* feat(versioning): bump Kotlin/Flutter version fields alongside package.json
+* feat(mobile-release): build and attach signed APK to release for Kotlin/Flutter projects
 ## v2.4.3 - 2026-07-19
 * docs: atualiza README com informação completa e atual do projeto
 ## v2.4.2 - 2026-07-18
