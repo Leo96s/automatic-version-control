@@ -26,35 +26,14 @@ jobs:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
 
-      # A run do "Semantic Versioning" que despoletou isto pode não ter
-      # criado nenhuma tag nova (ex. commit sem prefixo reconhecido) — e
-      # como este workflow corre de forma assíncrona, é preferível ser
-      # idempotente (seguro correr mais que uma vez) a tentar adivinhar
-      # com precisão "foi mesmo esta run que criou a tag". Descobre a tag
-      # mais recente e salta tudo se a Release dela já tiver um .apk.
-      - name: Determine tag and check idempotency
-        id: tag
-        run: |
-          git fetch --tags
-          LATEST=$(git describe --tags --abbrev=0)
-          echo "value=$LATEST" >> "$GITHUB_OUTPUT"
-
-          if gh release view "$LATEST" --json assets --jq '.assets[].name' 2>/dev/null | grep -q '\.apk$'; then
-            echo "A release $LATEST já tem um .apk anexado — nada a fazer."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       # Procura, na raiz e nas subpastas de primeiro nível, um projeto
       # Gradle/Kotlin (gradlew + settings.gradle[.kts]) ou Flutter
-      # (pubspec.yaml com secção flutter: + pasta android/). Não-op para
-      # qualquer outro tipo de repositório (ex. projetos Node puros).
+      # (pubspec.yaml com secção flutter: + pasta android/). O instalador
+      # só copia este workflow para repositórios onde já detetou um dos
+      # dois, mas repete a deteção aqui (barata) como rede de segurança
+      # caso a estrutura do repositório mude entretanto.
       - name: Detect mobile project
         id: detect
-        if: steps.tag.outputs.skip == 'false'
         shell: bash
         run: |
           shopt -s nullglob
@@ -84,6 +63,44 @@ jobs:
           echo "type=$TYPE" >> "$GITHUB_OUTPUT"
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
           echo "Detected: type=$TYPE dir=$DIR"
+
+      # A run do "Semantic Versioning" que despoletou isto pode não ter
+      # criado nenhuma tag nova (ex. commit sem prefixo reconhecido) — e
+      # como este workflow corre de forma assíncrona, é preferível ser
+      # idempotente (seguro correr mais que uma vez) a tentar adivinhar
+      # com precisão "foi mesmo esta run que criou a tag". Salta o build
+      # em dois casos: a Release da tag mais recente já tem um .apk, ou
+      # nada mudou dentro da pasta do projeto mobile desde a tag anterior
+      # (ex. um commit `fix:`/`docs:` que só mexeu noutra parte do repo —
+      # não faz sentido publicar um APK novo sem nenhuma alteração real).
+      - name: Determine tag and check if a rebuild is needed
+        id: tag
+        if: steps.detect.outputs.type != 'none'
+        run: |
+          git fetch --tags
+          LATEST=$(git describe --tags --abbrev=0)
+          echo "value=$LATEST" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$LATEST" --json assets --jq '.assets[].name' 2>/dev/null | grep -q '\.apk$'; then
+            echo "A release $LATEST já tem um .apk anexado — nada a fazer."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          DIR="${{ steps.detect.outputs.dir }}"
+          PREV=$(git describe --tags --abbrev=0 "${LATEST}^" 2>/dev/null || echo "")
+          if [ -n "$PREV" ]; then
+            CHANGED=$(git diff --name-only "$PREV" "$LATEST" -- "$DIR")
+            if [ -z "$CHANGED" ]; then
+              echo "Nada mudou em $DIR entre $PREV e $LATEST — a saltar build de APK."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Set up JDK 17
         if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'

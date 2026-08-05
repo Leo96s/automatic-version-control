@@ -41,6 +41,33 @@ function copyTemplateFile(relPath) {
   log(existedBefore ? `OK   ${relPath} (substituído pela versão mais recente)` : `OK   ${relPath}`);
 }
 
+// Mesma convenção do mobile-release.yml/versioning.yml (raiz + subpastas
+// de primeiro nível): só instala mobile-release.yml em repositórios que
+// realmente sejam Kotlin/Android ou Flutter, para não deixar um workflow
+// morto a disparar (sem fazer nada) em todos os outros repositórios.
+function detectMobileProject() {
+  const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
+  const dirs = ['.', ...entries.filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name)];
+
+  for (const d of dirs) {
+    const base = path.join(targetRoot, d);
+    const hasGradlew = fs.existsSync(path.join(base, 'gradlew'));
+    const hasSettings =
+      fs.existsSync(path.join(base, 'settings.gradle.kts')) || fs.existsSync(path.join(base, 'settings.gradle'));
+    if (hasGradlew && hasSettings) return 'gradle';
+  }
+
+  for (const d of dirs) {
+    const base = path.join(targetRoot, d);
+    const pubspecPath = path.join(base, 'pubspec.yaml');
+    if (!fs.existsSync(pubspecPath) || !fs.existsSync(path.join(base, 'android'))) continue;
+    const isFlutter = fs.readFileSync(pubspecPath, 'utf8').split('\n').some((line) => line.startsWith('flutter:'));
+    if (isFlutter) return 'flutter';
+  }
+
+  return 'none';
+}
+
 function ensureGitignoreHasNodeModules() {
   const gitignorePath = path.join(targetRoot, '.gitignore');
   const current = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
@@ -148,7 +175,14 @@ function main() {
   }
 
   copyTemplateFile('.github/workflows/versioning.yml');
-  copyTemplateFile('.github/workflows/mobile-release.yml');
+
+  const mobileType = detectMobileProject();
+  if (mobileType !== 'none') {
+    copyTemplateFile('.github/workflows/mobile-release.yml');
+    log(`Detetado projeto ${mobileType === 'gradle' ? 'Kotlin/Android' : 'Flutter'} — mobile-release.yml instalado.`);
+  } else {
+    log('SKIP .github/workflows/mobile-release.yml (não detetei projeto Kotlin/Android nem Flutter).');
+  }
 
   const hasPackageJson = readPackageJson() !== null;
 
@@ -167,19 +201,21 @@ function main() {
     restorePrepareScript(desiredPrepare);
   } else {
     log('SKIP tooling local em Node (commitlint/secretlint/husky) — sem package.json neste repositório.');
-    log('     Os workflows de CI (versioning.yml/mobile-release.yml) não precisam de Node local e foram instalados na mesma.');
+    log('     O workflow de CI (versioning.yml) não precisa de Node local e foi instalado na mesma.');
   }
 
   log('');
   log('Tudo pronto. Falta só, nas definições do repositório no GitHub:');
   log('  Settings -> Actions -> General -> Workflow permissions -> "Read and write permissions"');
   log('  Settings -> Actions -> General -> Actions permissions  -> "Allow all actions and reusable workflows"');
-  log('');
-  log('Se o repositório for um projeto Kotlin/Android ou Flutter, o mobile-release.yml');
-  log('só consegue compilar e publicar um APK assinado depois de configurares:');
-  log('  MOBILE_KEYSTORE_BASE64, MOBILE_KEYSTORE_STORE_PASSWORD, MOBILE_KEYSTORE_KEY_PASSWORD');
-  log('  (e opcionalmente MOBILE_GOOGLE_SERVICES_JSON_BASE64) em Settings -> Secrets and variables -> Actions.');
-  log('Ver o README deste pacote para o contrato de signingConfig que o projeto de destino tem de cumprir.');
+
+  if (mobileType !== 'none') {
+    log('');
+    log('mobile-release.yml só consegue compilar e publicar um APK assinado depois de configurares:');
+    log('  MOBILE_KEYSTORE_BASE64, MOBILE_KEYSTORE_STORE_PASSWORD, MOBILE_KEYSTORE_KEY_PASSWORD');
+    log('  (e opcionalmente MOBILE_GOOGLE_SERVICES_JSON_BASE64) em Settings -> Secrets and variables -> Actions.');
+    log('Ver o README deste pacote para o contrato de signingConfig que o projeto de destino tem de cumprir.');
+  }
 }
 
 main();

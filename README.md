@@ -44,7 +44,8 @@ npx github:Leo96s/automatic-version-control
 
 O instalador (`bin/install.js`):
 
-* Copia sempre para o repositório de destino `.github/workflows/versioning.yml` e `.github/workflows/mobile-release.yml` (ficheiros geridos por este pacote — são sempre substituídos pela versão mais recente ao voltar a correr o instalador)
+* Copia sempre para o repositório de destino `.github/workflows/versioning.yml` (ficheiro gerido por este pacote — é sempre substituído pela versão mais recente ao voltar a correr o instalador)
+* Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
 * **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
 * **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima — só instala os dois workflows de CI, que não precisam de Node local para correr (correm no runner do GitHub Actions)
 
@@ -59,10 +60,13 @@ Sem isto, o workflow não consegue fazer push de tags/commits nem criar Releases
 
 ## Build + release de APK (Kotlin/Flutter)
 
-Além do `versioning.yml`, o instalador copia sempre `.github/workflows/mobile-release.yml`. Este workflow arranca sempre que o `versioning.yml` termina com sucesso (`workflow_run`, não `push: tags:` — um push de tag feito com o `GITHUB_TOKEN` por omissão, como o que o `versioning.yml` faz, nunca dispara outros workflows, é uma proteção do GitHub Actions contra ciclos infinitos), vai buscar sozinho a tag mais recente à branch, e:
+O instalador só copia `.github/workflows/mobile-release.yml` para repositórios onde deteta, na raiz ou numa subpasta de primeiro nível, um projeto **Gradle/Kotlin** (`gradlew` + `settings.gradle[.kts]`) ou **Flutter** (`pubspec.yaml` com secção `flutter:` + pasta `android/`) — noutro tipo de repositório, este workflow nem é instalado.
 
-1. Procura, na raiz do repositório e nas subpastas de primeiro nível, um projeto **Gradle/Kotlin** (`gradlew` + `settings.gradle[.kts]`) ou **Flutter** (`pubspec.yaml` com secção `flutter:` + pasta `android/`). Se não encontrar nenhum dos dois, não faz nada — não falha o CI, só não compila/publica APK nenhum (repositórios Node puros, por exemplo, ficam só com o versionamento normal).
-2. Compila um APK de release assinado (`./gradlew assembleRelease` para Gradle/Kotlin, `flutter build apk --release` para Flutter) e anexa-o à GitHub Release da tag (a que o `versioning.yml` já cria, ou uma nova se ainda não existir).
+Quando instalado, arranca sempre que o `versioning.yml` termina com sucesso (`workflow_run`, não `push: tags:` — um push de tag feito com o `GITHUB_TOKEN` por omissão, como o que o `versioning.yml` faz, nunca dispara outros workflows, é uma proteção do GitHub Actions contra ciclos infinitos), vai buscar sozinho a tag mais recente à branch, e:
+
+1. Confirma o tipo de projeto e a pasta outra vez (deteção barata, repetida como rede de segurança).
+2. Salta tudo o resto se a Release da tag já tiver um `.apk` anexado (idempotência — o `workflow_run` pode disparar mais do que uma vez), **ou** se nada mudou dentro da pasta do projeto mobile desde a tag anterior (ex. um commit `docs:`/`ci:` que só mexeu noutra parte do repositório não gera um APK novo).
+3. Compila um APK de release assinado (`./gradlew assembleRelease` para Gradle/Kotlin, `flutter build apk --release` para Flutter) e anexa-o à GitHub Release da tag (a que o `versioning.yml` já cria, ou uma nova se ainda não existir).
 
 ### Secrets necessárias (Settings → Secrets and variables → Actions)
 
