@@ -1,3 +1,5 @@
+## v2.7.2 - 2026-08-05
+* fix(mobile-release): ignore the bot's own release commit in change-diff
 ## v2.7.1 - 2026-08-05
 * fix(install): read version marker from package.json, not git rev-parse
 ## v2.7.0 - 2026-08-05
