@@ -1,0 +1,164 @@
+name: Mobile Release (Kotlin/Flutter)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Procura, na raiz e nas subpastas de primeiro nível, um projeto
+      # Gradle/Kotlin (gradlew + settings.gradle[.kts]) ou Flutter
+      # (pubspec.yaml com secção flutter: + pasta android/). Não-op para
+      # qualquer outro tipo de repositório (ex. projetos Node puros).
+      - name: Detect mobile project
+        id: detect
+        shell: bash
+        run: |
+          shopt -s nullglob
+          TYPE="none"
+          DIR=""
+
+          for d in . */; do
+            d="${d%/}"
+            if [ -f "$d/gradlew" ] && { [ -f "$d/settings.gradle.kts" ] || [ -f "$d/settings.gradle" ]; }; then
+              TYPE="gradle"
+              DIR="$d"
+              break
+            fi
+          done
+
+          if [ "$TYPE" = "none" ]; then
+            for d in . */; do
+              d="${d%/}"
+              if [ -f "$d/pubspec.yaml" ] && [ -d "$d/android" ] && grep -q "^flutter:" "$d/pubspec.yaml"; then
+                TYPE="flutter"
+                DIR="$d"
+                break
+              fi
+            done
+          fi
+
+          echo "type=$TYPE" >> "$GITHUB_OUTPUT"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Detected: type=$TYPE dir=$DIR"
+
+      - name: Set up JDK 17
+        if: steps.detect.outputs.type != 'none'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        if: steps.detect.outputs.type == 'flutter'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # Opcional: só é escrito se o repositório de destino tiver esta
+      # secret configurada (nem todos os projetos usam Firebase).
+      - name: Decode google-services.json (optional)
+        if: steps.detect.outputs.type != 'none'
+        run: |
+          SECRET="${{ secrets.MOBILE_GOOGLE_SERVICES_JSON_BASE64 }}"
+          if [ -z "$SECRET" ]; then
+            echo "MOBILE_GOOGLE_SERVICES_JSON_BASE64 não definido, a saltar."
+            exit 0
+          fi
+          DIR="${{ steps.detect.outputs.dir }}"
+          if [ "${{ steps.detect.outputs.type }}" = "flutter" ]; then
+            DEST="$DIR/android/app/google-services.json"
+          else
+            DEST="$DIR/app/google-services.json"
+          fi
+          echo "$SECRET" | base64 -d > "$DEST"
+
+      - name: Decode release keystore
+        if: steps.detect.outputs.type != 'none'
+        run: echo "${{ secrets.MOBILE_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      # Contrato: o signingConfig de release do projeto Gradle/Kotlin tem
+      # de ler KEYSTORE_PATH/STORE_PASSWORD/KEY_PASSWORD de variáveis de
+      # ambiente (ver README).
+      - name: Build signed release APK (Gradle)
+        if: steps.detect.outputs.type == 'gradle'
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          STORE_PASSWORD: ${{ secrets.MOBILE_KEYSTORE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.MOBILE_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          cd "${{ steps.detect.outputs.dir }}"
+          ./gradlew assembleRelease
+
+      # Contrato: o android/app/build.gradle(.kts) do projeto Flutter tem
+      # de ter um signingConfigs.release a ler android/key.properties
+      # (ver README) — este passo escreve esse ficheiro a partir dos
+      # segredos, mas não cria o signingConfig em si.
+      - name: Build signed release APK (Flutter)
+        if: steps.detect.outputs.type == 'flutter'
+        run: |
+          DIR="${{ steps.detect.outputs.dir }}"
+          cat > "$DIR/android/key.properties" <<EOF
+          storePassword=${{ secrets.MOBILE_KEYSTORE_STORE_PASSWORD }}
+          keyPassword=${{ secrets.MOBILE_KEYSTORE_KEY_PASSWORD }}
+          keyAlias=upload
+          storeFile=${{ runner.temp }}/release.jks
+          EOF
+          cd "$DIR"
+          flutter pub get
+          flutter build apk --release
+
+      - name: Locate built APK
+        id: apk
+        if: steps.detect.outputs.type != 'none'
+        run: |
+          DIR="${{ steps.detect.outputs.dir }}"
+          if [ "${{ steps.detect.outputs.type }}" = "flutter" ]; then
+            APK="$DIR/build/app/outputs/flutter-apk/app-release.apk"
+          else
+            APK=$(find "$DIR" -path '*/build/outputs/apk/release/*.apk' | head -1)
+          fi
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "Não encontrei nenhum .apk no sítio esperado." >&2
+            exit 1
+          fi
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section for this tag
+        if: steps.detect.outputs.type != 'none'
+        run: |
+          VERSION="${{ github.ref_name }}"
+          awk -v ver="## $VERSION " '
+            index($0, ver) == 1 { found=1; print; next }
+            found && /^## v/ { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "$VERSION" > release_notes.md
+          fi
+
+      # versioning.yml (workflow separado, despoletado pelo push a
+      # main/dev que criou esta tag) também cria a Release, sem anexo —
+      # pode ainda não ter corrido quando este workflow chega aqui (as
+      # duas execuções não têm ordem garantida). Anexa à release
+      # existente se já lá estiver, senão cria-a já com o APK.
+      - name: Publish APK to GitHub release
+        if: steps.detect.outputs.type != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          APK="${{ steps.apk.outputs.path }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            gh release create "$TAG" "$APK" --title "$TAG" --notes-file release_notes.md --prerelease
+          fi

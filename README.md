@@ -9,6 +9,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 * Atualiza automaticamente todos os **`package.json`/`package-lock.json`** do repositório (incluindo subpastas)
 * Gera e mantém atualizados os ficheiros **`CHANGELOG.md`** e **`RELEASE_NOTES.md`**
 * Publica automaticamente uma **GitHub Release** com as notas da versão
+* Em projetos **Kotlin/Android ou Flutter**, compila e anexa à Release um **APK de release assinado** (ver [Build + release de APK](#build--release-de-apk-kotlinflutter))
 * Ignora commits de merge, commits de release do próprio bot (`chore(release): ...`) e mensagens sem prefixo semântico
 * Valida localmente as mensagens de commit (Conventional Commits) antes de permitir o commit
 * Bloqueia localmente, antes do commit, ficheiros sensíveis, segredos, ficheiros demasiado grandes e marcadores de conflito por resolver
@@ -42,11 +43,9 @@ npx github:Leo96s/automatic-version-control
 
 O instalador (`bin/install.js`):
 
-* Copia para o repositório de destino: `.github/workflows/versioning.yml`, `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js` (ficheiros geridos por este pacote — são sempre substituídos pela versão mais recente ao voltar a correr o instalador)
-* Garante que `node_modules/` está no `.gitignore`
-* Adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver)
-* Corre `npm install`
-* Configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
+* Copia sempre para o repositório de destino `.github/workflows/versioning.yml` e `.github/workflows/mobile-release.yml` (ficheiros geridos por este pacote — são sempre substituídos pela versão mais recente ao voltar a correr o instalador)
+* **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
+* **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima — só instala os dois workflows de CI, que não precisam de Node local para correr (correm no runner do GitHub Actions)
 
 ### Depois de instalar
 
@@ -56,6 +55,27 @@ No repositório de destino, em **Settings → Actions → General**:
 * **Actions permissions** → `Allow all actions and reusable workflows`
 
 Sem isto, o workflow não consegue fazer push de tags/commits nem criar Releases.
+
+## Build + release de APK (Kotlin/Flutter)
+
+Além do `versioning.yml`, o instalador copia sempre `.github/workflows/mobile-release.yml`. Este workflow corre a cada tag `vX.Y.Z` criada (a que o `versioning.yml` acabou de empurrar) e:
+
+1. Procura, na raiz do repositório e nas subpastas de primeiro nível, um projeto **Gradle/Kotlin** (`gradlew` + `settings.gradle[.kts]`) ou **Flutter** (`pubspec.yaml` com secção `flutter:` + pasta `android/`). Se não encontrar nenhum dos dois, não faz nada — não falha o CI, só não compila/publica APK nenhum (repositórios Node puros, por exemplo, ficam só com o versionamento normal).
+2. Compila um APK de release assinado (`./gradlew assembleRelease` para Gradle/Kotlin, `flutter build apk --release` para Flutter) e anexa-o à GitHub Release da tag (a que o `versioning.yml` já cria, ou uma nova se ainda não existir).
+
+### Secrets necessárias (Settings → Secrets and variables → Actions)
+
+| Secret | Obrigatória | Descrição |
+| --- | --- | --- |
+| `MOBILE_KEYSTORE_BASE64` | Sim | `base64 -w0 caminho/para/a/keystore.jks` da keystore de release |
+| `MOBILE_KEYSTORE_STORE_PASSWORD` | Sim | Password da keystore |
+| `MOBILE_KEYSTORE_KEY_PASSWORD` | Sim | Password da chave (alias `upload`, fixo) |
+| `MOBILE_GOOGLE_SERVICES_JSON_BASE64` | Não | `base64 -w0 google-services.json`, só se o projeto usar Firebase |
+
+### Contrato que o projeto de destino tem de cumprir
+
+* **Gradle/Kotlin**: o `signingConfig` de release do `build.gradle.kts` tem de ler `KEYSTORE_PATH`, `STORE_PASSWORD` e `KEY_PASSWORD` de variáveis de ambiente (não de um ficheiro `local.properties` ou valores fixos no código).
+* **Flutter**: o `android/app/build.gradle(.kts)` tem de ter um `signingConfigs.release` que lê `android/key.properties` (`storePassword`, `keyPassword`, `keyAlias`, `storeFile`) — este workflow escreve esse ficheiro a partir das secrets antes de compilar, mas não cria o `signingConfigs.release` em si; sem ele, o build de release continua a usar a assinatura de debug por omissão do template do Flutter.
 
 ## Convenção de commits
 
@@ -88,6 +108,7 @@ Instalados em `.husky/`:
 ├── bin/install.js                    # instalador (npx github:Leo96s/automatic-version-control)
 ├── scripts/pre-commit-checks.js      # verificações de segurança pre-commit
 ├── .github/workflows/versioning.yml  # workflow de versionamento semântico
+├── .github/workflows/mobile-release.yml # build + release de APK (Kotlin/Flutter)
 ├── commitlint.config.js              # regras de validação de mensagens de commit
 ├── .secretlintrc.json                # regras de deteção de segredos
 ├── .lintstagedrc.json                # o que corre sobre ficheiros staged

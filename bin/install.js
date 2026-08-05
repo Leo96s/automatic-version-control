@@ -53,14 +53,14 @@ function ensureGitignoreHasNodeModules() {
   log('OK   .gitignore (adicionado node_modules/)');
 }
 
+// Devolve null quando não há package.json — usado por main() para saltar
+// toda a parte de tooling local em Node (husky/commitlint/secretlint),
+// que não faz sentido num repositório sem Node. O workflow de CI
+// (versioning.yml/mobile-release.yml) não depende disto.
 function readPackageJson() {
   const pkgPath = path.join(targetRoot, 'package.json');
   if (!fs.existsSync(pkgPath)) {
-    console.error(
-      '[automatic-version-control] Não encontrei package.json neste repositório.\n' +
-        'Corre "npm init -y" primeiro e volta a correr este comando.'
-    );
-    process.exit(1);
+    return null;
   }
   return JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 }
@@ -148,23 +148,38 @@ function main() {
   }
 
   copyTemplateFile('.github/workflows/versioning.yml');
-  copyTemplateFile('commitlint.config.js');
-  copyTemplateFile('.secretlintrc.json');
-  copyTemplateFile('.lintstagedrc.json');
-  copyTemplateFile('scripts/pre-commit-checks.js');
-  ensureGitignoreHasNodeModules();
-  const desiredPrepare = mergePackageJson();
+  copyTemplateFile('.github/workflows/mobile-release.yml');
 
-  log('A correr npm install...');
-  run('npm install');
+  const hasPackageJson = readPackageJson() !== null;
 
-  setupHuskyHooks();
-  restorePrepareScript(desiredPrepare);
+  if (hasPackageJson) {
+    copyTemplateFile('commitlint.config.js');
+    copyTemplateFile('.secretlintrc.json');
+    copyTemplateFile('.lintstagedrc.json');
+    copyTemplateFile('scripts/pre-commit-checks.js');
+    ensureGitignoreHasNodeModules();
+    const desiredPrepare = mergePackageJson();
+
+    log('A correr npm install...');
+    run('npm install');
+
+    setupHuskyHooks();
+    restorePrepareScript(desiredPrepare);
+  } else {
+    log('SKIP tooling local em Node (commitlint/secretlint/husky) — sem package.json neste repositório.');
+    log('     Os workflows de CI (versioning.yml/mobile-release.yml) não precisam de Node local e foram instalados na mesma.');
+  }
 
   log('');
   log('Tudo pronto. Falta só, nas definições do repositório no GitHub:');
   log('  Settings -> Actions -> General -> Workflow permissions -> "Read and write permissions"');
   log('  Settings -> Actions -> General -> Actions permissions  -> "Allow all actions and reusable workflows"');
+  log('');
+  log('Se o repositório for um projeto Kotlin/Android ou Flutter, o mobile-release.yml');
+  log('só consegue compilar e publicar um APK assinado depois de configurares:');
+  log('  MOBILE_KEYSTORE_BASE64, MOBILE_KEYSTORE_STORE_PASSWORD, MOBILE_KEYSTORE_KEY_PASSWORD');
+  log('  (e opcionalmente MOBILE_GOOGLE_SERVICES_JSON_BASE64) em Settings -> Secrets and variables -> Actions.');
+  log('Ver o README deste pacote para o contrato de signingConfig que o projeto de destino tem de cumprir.');
 }
 
 main();
