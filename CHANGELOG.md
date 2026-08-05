@@ -1,3 +1,5 @@
+## v2.6.2 - 2026-08-05
+* fix(mobile-release): only install for mobile repos, skip build when unchanged
 ## v2.6.1 - 2026-08-05
 * fix(mobile-release): trigger on workflow_run instead of tag push
 ## v2.6.0 - 2026-08-05
