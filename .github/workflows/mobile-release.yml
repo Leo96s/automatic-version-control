@@ -90,13 +90,26 @@ jobs:
           DIR="${{ steps.detect.outputs.dir }}"
           PREV=$(git describe --tags --abbrev=0 "${LATEST}^" 2>/dev/null || echo "")
           if [ -n "$PREV" ]; then
-            # Exclui .github (workflows/CI) do diff — sem isto, quando o
-            # projeto mobile vive na raiz do repositório (DIR="."), um
-            # commit que só mexe num workflow conta sempre como "mudou o
-            # projeto", e o build nunca é saltado.
-            CHANGED=$(git diff --name-only "$PREV" "$LATEST" -- "$DIR" ':!.github')
+            # Entre duas tags consecutivas fica sempre, no meio, o commit
+            # "chore(release): ..." do bot da versão anterior — e esse
+            # commit mexe no versionCode/versionName dentro de $DIR
+            # (ver versioning.yml). Se comparássemos só o conteúdo de
+            # $DIR entre as duas tags, essa alteração do bot contava
+            # sempre como "o projeto mudou", e o build nunca seria
+            # saltado. Em vez disso, percorre os commits um a um e
+            # ignora os do próprio bot (mesmo prefixo que o versioning.yml
+            # já usa para se ignorar a si mesmo), só olhando para o que
+            # humanos (ou outra automação) realmente mudaram dentro de
+            # $DIR — excluindo sempre .github (workflows/CI).
+            CHANGED=$(git log --pretty=%H "$PREV..$LATEST" | while read -r c; do
+              MSG=$(git log -1 --pretty=%s "$c")
+              case "$MSG" in
+                "chore(release):"*) continue ;;
+              esac
+              git diff-tree --no-commit-id --name-only -r "$c" -- "$DIR" ':!.github'
+            done)
             if [ -z "$CHANGED" ]; then
-              echo "Nada mudou em $DIR entre $PREV e $LATEST — a saltar build de APK."
+              echo "Nada mudou em $DIR (fora de commits do bot) entre $PREV e $LATEST — a saltar build de APK."
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
