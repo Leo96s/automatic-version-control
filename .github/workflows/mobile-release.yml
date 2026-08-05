@@ -90,7 +90,11 @@ jobs:
           DIR="${{ steps.detect.outputs.dir }}"
           PREV=$(git describe --tags --abbrev=0 "${LATEST}^" 2>/dev/null || echo "")
           if [ -n "$PREV" ]; then
-            CHANGED=$(git diff --name-only "$PREV" "$LATEST" -- "$DIR")
+            # Exclui .github (workflows/CI) do diff — sem isto, quando o
+            # projeto mobile vive na raiz do repositório (DIR="."), um
+            # commit que só mexe num workflow conta sempre como "mudou o
+            # projeto", e o build nunca é saltado.
+            CHANGED=$(git diff --name-only "$PREV" "$LATEST" -- "$DIR" ':!.github')
             if [ -z "$CHANGED" ]; then
               echo "Nada mudou em $DIR entre $PREV e $LATEST — a saltar build de APK."
               echo "skip=true" >> "$GITHUB_OUTPUT"
