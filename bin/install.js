@@ -25,6 +25,18 @@ function run(cmd) {
   execSync(cmd, { cwd: targetRoot, stdio: 'inherit' });
 }
 
+// Grava o commit SHA deste próprio pacote (o clone temporário que o npx
+// acabou de fazer) no repositório de destino, para uma ferramenta externa
+// (ex. um hook) conseguir saber, sem adivinhar por diff de conteúdo, se o
+// que está instalado corresponde à última versão do main.
+function writeVersionMarker() {
+  const res = execSync('git rev-parse HEAD', { cwd: templateRoot, encoding: 'utf8' }).trim();
+  const dest = path.join(targetRoot, '.github', 'automatic-version-control.version');
+  ensureDir(path.dirname(dest));
+  fs.writeFileSync(dest, `${res}\n`);
+  log(`OK   .github/automatic-version-control.version (${res.slice(0, 12)})`);
+}
+
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -175,6 +187,7 @@ function main() {
   }
 
   copyTemplateFile('.github/workflows/versioning.yml');
+  writeVersionMarker();
 
   const mobileType = detectMobileProject();
   if (mobileType !== 'none') {
