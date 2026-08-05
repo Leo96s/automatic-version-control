@@ -59,7 +59,7 @@ Sem isto, o workflow não consegue fazer push de tags/commits nem criar Releases
 
 ## Build + release de APK (Kotlin/Flutter)
 
-Além do `versioning.yml`, o instalador copia sempre `.github/workflows/mobile-release.yml`. Este workflow corre a cada tag `vX.Y.Z` criada (a que o `versioning.yml` acabou de empurrar) e:
+Além do `versioning.yml`, o instalador copia sempre `.github/workflows/mobile-release.yml`. Este workflow arranca sempre que o `versioning.yml` termina com sucesso (`workflow_run`, não `push: tags:` — um push de tag feito com o `GITHUB_TOKEN` por omissão, como o que o `versioning.yml` faz, nunca dispara outros workflows, é uma proteção do GitHub Actions contra ciclos infinitos), vai buscar sozinho a tag mais recente à branch, e:
 
 1. Procura, na raiz do repositório e nas subpastas de primeiro nível, um projeto **Gradle/Kotlin** (`gradlew` + `settings.gradle[.kts]`) ou **Flutter** (`pubspec.yaml` com secção `flutter:` + pasta `android/`). Se não encontrar nenhum dos dois, não faz nada — não falha o CI, só não compila/publica APK nenhum (repositórios Node puros, por exemplo, ficam só com o versionamento normal).
 2. Compila um APK de release assinado (`./gradlew assembleRelease` para Gradle/Kotlin, `flutter build apk --release` para Flutter) e anexa-o à GitHub Release da tag (a que o `versioning.yml` já cria, ou uma nova se ainda não existir).

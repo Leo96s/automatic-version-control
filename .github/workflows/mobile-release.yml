@@ -1,18 +1,52 @@
 name: Mobile Release (Kotlin/Flutter)
 
+# Não reage a "push: tags" porque a tag é criada e empurrada pelo
+# versioning.yml usando o GITHUB_TOKEN por omissão — o GitHub Actions
+# nunca deixa um push feito com esse token disparar outros workflows
+# (proteção contra ciclos infinitos). Em vez disso, arranca quando o
+# workflow "Semantic Versioning" termina, e vai buscar sozinho a tag
+# mais recente à branch onde ele correu.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["Semantic Versioning"]
+    types:
+      - completed
+  workflow_dispatch: {}
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          fetch-depth: 0
+
+      # A run do "Semantic Versioning" que despoletou isto pode não ter
+      # criado nenhuma tag nova (ex. commit sem prefixo reconhecido) — e
+      # como este workflow corre de forma assíncrona, é preferível ser
+      # idempotente (seguro correr mais que uma vez) a tentar adivinhar
+      # com precisão "foi mesmo esta run que criou a tag". Descobre a tag
+      # mais recente e salta tudo se a Release dela já tiver um .apk.
+      - name: Determine tag and check idempotency
+        id: tag
+        run: |
+          git fetch --tags
+          LATEST=$(git describe --tags --abbrev=0)
+          echo "value=$LATEST" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$LATEST" --json assets --jq '.assets[].name' 2>/dev/null | grep -q '\.apk$'; then
+            echo "A release $LATEST já tem um .apk anexado — nada a fazer."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # Procura, na raiz e nas subpastas de primeiro nível, um projeto
       # Gradle/Kotlin (gradlew + settings.gradle[.kts]) ou Flutter
@@ -20,6 +54,7 @@ jobs:
       # qualquer outro tipo de repositório (ex. projetos Node puros).
       - name: Detect mobile project
         id: detect
+        if: steps.tag.outputs.skip == 'false'
         shell: bash
         run: |
           shopt -s nullglob
@@ -51,14 +86,14 @@ jobs:
           echo "Detected: type=$TYPE dir=$DIR"
 
       - name: Set up JDK 17
-        if: steps.detect.outputs.type != 'none'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Flutter
-        if: steps.detect.outputs.type == 'flutter'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type == 'flutter'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -66,7 +101,7 @@ jobs:
       # Opcional: só é escrito se o repositório de destino tiver esta
       # secret configurada (nem todos os projetos usam Firebase).
       - name: Decode google-services.json (optional)
-        if: steps.detect.outputs.type != 'none'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'
         run: |
           SECRET="${{ secrets.MOBILE_GOOGLE_SERVICES_JSON_BASE64 }}"
           if [ -z "$SECRET" ]; then
@@ -82,14 +117,14 @@ jobs:
           echo "$SECRET" | base64 -d > "$DEST"
 
       - name: Decode release keystore
-        if: steps.detect.outputs.type != 'none'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'
         run: echo "${{ secrets.MOBILE_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
 
       # Contrato: o signingConfig de release do projeto Gradle/Kotlin tem
       # de ler KEYSTORE_PATH/STORE_PASSWORD/KEY_PASSWORD de variáveis de
       # ambiente (ver README).
       - name: Build signed release APK (Gradle)
-        if: steps.detect.outputs.type == 'gradle'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type == 'gradle'
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           STORE_PASSWORD: ${{ secrets.MOBILE_KEYSTORE_STORE_PASSWORD }}
@@ -103,7 +138,7 @@ jobs:
       # (ver README) — este passo escreve esse ficheiro a partir dos
       # segredos, mas não cria o signingConfig em si.
       - name: Build signed release APK (Flutter)
-        if: steps.detect.outputs.type == 'flutter'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type == 'flutter'
         run: |
           DIR="${{ steps.detect.outputs.dir }}"
           cat > "$DIR/android/key.properties" <<EOF
@@ -118,7 +153,7 @@ jobs:
 
       - name: Locate built APK
         id: apk
-        if: steps.detect.outputs.type != 'none'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'
         run: |
           DIR="${{ steps.detect.outputs.dir }}"
           if [ "${{ steps.detect.outputs.type }}" = "flutter" ]; then
@@ -133,9 +168,9 @@ jobs:
           echo "path=$APK" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog section for this tag
-        if: steps.detect.outputs.type != 'none'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ steps.tag.outputs.value }}"
           awk -v ver="## $VERSION " '
             index($0, ver) == 1 { found=1; print; next }
             found && /^## v/ { exit }
@@ -145,17 +180,15 @@ jobs:
             echo "$VERSION" > release_notes.md
           fi
 
-      # versioning.yml (workflow separado, despoletado pelo push a
-      # main/dev que criou esta tag) também cria a Release, sem anexo —
-      # pode ainda não ter corrido quando este workflow chega aqui (as
-      # duas execuções não têm ordem garantida). Anexa à release
-      # existente se já lá estiver, senão cria-a já com o APK.
+      # versioning.yml já criou a Release (sem anexo) antes deste
+      # workflow arrancar — anexa-lhe o APK. Só cria a Release de raiz se
+      # por algum motivo ela ainda não existir.
       - name: Publish APK to GitHub release
-        if: steps.detect.outputs.type != 'none'
+        if: steps.tag.outputs.skip == 'false' && steps.detect.outputs.type != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="${{ steps.tag.outputs.value }}"
           APK="${{ steps.apk.outputs.path }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber
