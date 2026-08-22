@@ -1,2 +1,2 @@
-## v2.7.3 - 2026-08-19
-* fix(release): restrict publication to main
+## v2.8.0 - 2026-08-22
+* feat: add automatic plugin version synchronization
