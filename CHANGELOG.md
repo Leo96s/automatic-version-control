@@ -1,3 +1,5 @@
+## v2.9.0 - 2026-08-22
+* feat(security): add npm vulnerability audit gate
 ## v2.8.2 - 2026-08-22
 * fix: preserve release tag commit placement
 ## v2.8.1 - 2026-08-22
