@@ -58,7 +58,7 @@ test("plugin action updates and stages all recognized plugin metadata", () => {
   assert.match(body, new RegExp(`git add\\s+--\\s+["']?\\$${fileVariable}["']?`));
 });
 
-test("retargets only the final release tag after the synchronized release commit", () => {
+test("keeps replayed release tags on their original commits after the release commit", () => {
   const workflow = fs.readFileSync(workflowPath, "utf8");
   const commitStep = workflow.match(
     /- name: Commit and Push everything[\s\S]*?run: \|(?<body>[\s\S]*?)(?=\n\s*- name: Create GitHub Release)/,
@@ -67,24 +67,19 @@ test("retargets only the final release tag after the synchronized release commit
 
   const body = commitStep.groups.body;
   const commit = body.indexOf("git commit -m");
-  const finalTagVariable = body.indexOf("FINAL_TAG=${{ env.new_version }}");
-  const retargetFinalTag = body.indexOf('git tag -f "$FINAL_TAG" HEAD');
   const pushBranch = body.indexOf("git push origin HEAD");
-  const pushFinalTag = body.indexOf('git push origin "refs/tags/$FINAL_TAG"');
   const pushIntermediateTags = body.indexOf("git push origin --tags");
 
-  assert.ok(commit >= 0, "the synchronized files must be committed");
-  assert.ok(finalTagVariable > commit, "the final tag must be selected after the release commit");
-  assert.ok(retargetFinalTag > finalTagVariable, "the final tag must be retargeted to the release commit");
-  assert.ok(pushBranch > retargetFinalTag, "the release commit must be pushed after retagging");
-  assert.ok(pushFinalTag > pushBranch, "the corrected final tag must be pushed explicitly");
-  assert.ok(pushIntermediateTags > pushFinalTag, "intermediate replay tags must be pushed without being moved");
+  assert.ok(commit >= 0, "the release files must be committed");
+  assert.ok(pushBranch > commit, "the release commit must be pushed after it is created");
+  assert.ok(pushIntermediateTags > pushBranch, "replayed tags must be pushed after the release commit");
+  assert.equal(body.includes("FINAL_TAG="), false, "the final tag must not be reassigned after the release commit");
 
-  assert.equal((body.match(/git tag -f/g) || []).length, 1, "only the final tag may be moved");
+  assert.equal((body.match(/git tag -f/g) || []).length, 0, "the workflow must not move replayed tags");
   assert.match(workflow, /gh release create "\$\{\{ env\.new_version \}\}"/);
 });
 
-test("final tag contains synchronized plugin metadata while an intermediate tag keeps its original commit", (t) => {
+test("replayed tags keep their original commit while the release commit contains synchronized metadata", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "automatic-version-control-tag-retarget-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   git(root, ["init", "--quiet"]);
@@ -112,11 +107,13 @@ test("final tag contains synchronized plugin metadata while an intermediate tag 
   require(synchronizerPath).syncPluginVersions({ root, version: "0.1.2" });
   git(root, ["add", "--", manifestPath]);
   commit(root, "chore(release): v0.1.2 [skip ci]");
-  git(root, ["tag", "-f", "v0.1.2", "HEAD"]);
 
-  const finalManifest = JSON.parse(git(root, ["show", `v0.1.2:${manifestPath}`]));
+  const releaseManifest = JSON.parse(fs.readFileSync(absoluteManifestPath, "utf8"));
+  const taggedManifest = JSON.parse(git(root, ["show", `v0.1.2:${manifestPath}`]));
   const intermediateManifest = JSON.parse(git(root, ["show", `v0.1.1:${manifestPath}`]));
-  assert.equal(finalManifest.version, "0.1.2");
+  assert.equal(releaseManifest.version, "0.1.2");
+  assert.equal(taggedManifest.version, "0.1.0");
   assert.equal(intermediateManifest.version, "0.1.0");
   assert.equal(git(root, ["rev-parse", "v0.1.1"]), intermediateCommit);
+  assert.equal(git(root, ["rev-parse", "v0.1.2"]), git(root, ["rev-parse", "HEAD~1"]));
 });
