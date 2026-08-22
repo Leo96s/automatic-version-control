@@ -1,3 +1,5 @@
+## v2.8.2 - 2026-08-22
+* fix: preserve release tag commit placement
 ## v2.8.1 - 2026-08-22
 * fix: isolate plugin version synchronization
 ## v2.8.0 - 2026-08-22
