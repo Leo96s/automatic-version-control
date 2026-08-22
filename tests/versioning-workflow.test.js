@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const workflowPath = path.resolve(__dirname, "..", ".github", "workflows", "versioning.yml");
+const pluginActionPath = path.resolve(__dirname, "..", ".github", "actions", "plugin-version-sync", "action.yml");
 const synchronizerPath = path.resolve(__dirname, "..", "scripts", "sync-plugin-versions.js");
 
 function git(root, args, options = {}) {
@@ -18,21 +19,29 @@ function commit(root, message) {
   git(root, ["-c", "user.email=fixtures@example.invalid", "-c", "user.name=Test Fixture", "commit", "--quiet", "-m", message]);
 }
 
-test("keeps the main-only release gate and synchronizes then stages recognized plugin files", () => {
+test("keeps the main-only release gate and invokes the optional plugin action after version calculation", () => {
   const workflow = fs.readFileSync(workflowPath, "utf8");
 
   assert.match(workflow, /branches:\s*\r?\n\s*- main/);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
 
   const versionCalculation = workflow.indexOf('echo "new_version=$FINAL_VERSION"');
-  const synchronizer = workflow.indexOf('node scripts/sync-plugin-versions.js "$VERSION"');
+  const synchronizer = workflow.indexOf("uses: ./.github/actions/plugin-version-sync");
   assert.ok(versionCalculation >= 0, "the workflow must calculate a final version");
-  assert.ok(synchronizer > versionCalculation, "the synchronizer must run after version calculation");
+  assert.ok(synchronizer > versionCalculation, "the plugin action must run after version calculation");
+  assert.match(workflow, /if: env\.created_tags == '1' && hashFiles\('\.github\/actions\/plugin-version-sync\/action\.yml'\) != ''/);
+  assert.match(workflow, /version: \$\{\{ env\.new_version \}\}/);
+  assert.doesNotMatch(workflow, /\.claude-plugin\/plugin\.json|\.codex-plugin\/plugin\.json|\.agents\/plugins\/marketplace\.json/);
+});
 
-  const stagingLoop = workflow.match(
+test("plugin action updates and stages all recognized plugin metadata", () => {
+  const action = fs.readFileSync(pluginActionPath, "utf8");
+
+  assert.match(action, /node scripts\/sync-plugin-versions\.js \"\$VERSION\"/);
+  const stagingLoop = action.match(
     /git ls-files -z --(?<pathspecs>[\s\S]*?)\|\s*while IFS= read -r -d '' (?<fileVariable>[A-Za-z_][A-Za-z0-9_]*); do(?<body>[\s\S]*?)\bdone/,
   );
-  assert.ok(stagingLoop?.groups, "the workflow must pipe recognized plugin files into a staging loop");
+  assert.ok(stagingLoop?.groups, "the plugin action must pipe recognized files into a staging loop");
 
   const { pathspecs, fileVariable, body } = stagingLoop.groups;
   for (const recognizedPath of [

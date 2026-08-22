@@ -9,7 +9,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 * Atualiza automaticamente todos os **`package.json`/`package-lock.json`** do repositório (incluindo subpastas)
 * Gera e mantém atualizados os ficheiros **`CHANGELOG.md`** e **`RELEASE_NOTES.md`**
 * Publica automaticamente uma **GitHub Release** com as notas da versão
-* Sincroniza as versões de plugins locais detetados, sem fazer nada em repositórios sem metadados de plugins reconhecidos
+* Sincroniza as versões de plugins locais detetados através de uma extensão instalada apenas em projetos de plugins
 * Em projetos **Kotlin/Android ou Flutter**, compila e anexa à Release um **APK de release assinado** (ver [Build + release de APK](#build--release-de-apk-kotlinflutter))
 * Ignora commits de merge, commits de release do próprio bot (`chore(release): ...`) e mensagens sem prefixo semântico
 * Valida localmente as mensagens de commit (Conventional Commits) antes de permitir o commit
@@ -57,11 +57,12 @@ npx github:Leo96s/automatic-version-control
 
 O instalador (`bin/install.js`):
 
-* Copia sempre para o repositório de destino `.github/workflows/versioning.yml` (ficheiro gerido por este pacote — é sempre substituído pela versão mais recente ao voltar a correr o instalador)
+* Copia sempre para o repositório de destino `.github/workflows/versioning.yml` (workflow genérico gerido por este pacote — é sempre substituído pela versão mais recente ao voltar a correr o instalador)
 * Grava o commit SHA deste pacote instalado em `.github/automatic-version-control.version` — permite a uma ferramenta externa (ex. um hook local) saber se o repositório está desatualizado sem ter de comparar conteúdo de ficheiros
 * Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
+* **Se detetar metadados de plugin**: copia apenas nesses projetos a extensão `.github/actions/plugin-version-sync/action.yml` e o helper `scripts/sync-plugin-versions.js`; o workflow genérico chama a extensão no mesmo job do release
 * **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
-* **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima; instala os workflows de CI aplicáveis e, se detetar metadados de plugin, também o helper `scripts/sync-plugin-versions.js`, que corre no runner do GitHub Actions e não exige Node local no repositório
+* **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima; instala os workflows de CI aplicáveis e, se detetar metadados de plugin, também a extensão e o helper de sincronização, que correm no runner do GitHub Actions e não exigem Node local no repositório
 
 ### Depois de instalar
 
@@ -126,7 +127,8 @@ Instalados em `.husky/`:
 .
 ├── bin/install.js                    # instalador (npx github:Leo96s/automatic-version-control)
 ├── scripts/pre-commit-checks.js      # verificações de segurança pre-commit
-├── .github/workflows/versioning.yml  # workflow de versionamento semântico
+├── .github/workflows/versioning.yml  # workflow genérico de versionamento semântico
+├── .github/actions/plugin-version-sync/action.yml # extensão de plugins, instalada condicionalmente
 ├── .github/workflows/mobile-release.yml # build + release de APK (Kotlin/Flutter)
 ├── commitlint.config.js              # regras de validação de mensagens de commit
 ├── .secretlintrc.json                # regras de deteção de segredos

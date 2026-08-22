@@ -17,6 +17,11 @@ const DEV_DEPENDENCIES = {
   '@secretlint/secretlint-rule-preset-recommend': '^13.0.2',
 };
 
+const PLUGIN_VERSION_SYNC_FILES = [
+  '.github/actions/plugin-version-sync/action.yml',
+  'scripts/sync-plugin-versions.js',
+];
+
 function log(msg) {
   console.log(`[automatic-version-control] ${msg}`);
 }
@@ -344,10 +349,14 @@ function main() {
   writeVersionMarker();
 
   if (detectPluginProject()) {
-    copyTemplateFile('scripts/sync-plugin-versions.js');
-    log('Detetado projeto com plugin Claude Code ou Codex — sincronizador de versões instalado.');
+    for (const relPath of PLUGIN_VERSION_SYNC_FILES) {
+      copyTemplateFile(relPath);
+    }
+    log('Detetado projeto com plugin Claude Code ou Codex — extensao de sincronizacao instalada.');
   } else {
-    removeUnchangedTemplateFile('scripts/sync-plugin-versions.js');
+    for (const relPath of PLUGIN_VERSION_SYNC_FILES) {
+      removeUnchangedTemplateFile(relPath);
+    }
   }
 
   const mobileType = detectMobileProject();

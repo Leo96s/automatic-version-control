@@ -178,22 +178,11 @@ jobs:
             fi
           done
 
-      - name: Synchronize plugin versions
-        if: env.created_tags == '1' && hashFiles('scripts/sync-plugin-versions.js') != ''
-        run: |
-          VERSION=${{ env.new_version }}
-          VERSION=${VERSION#v}
-          node scripts/sync-plugin-versions.js "$VERSION"
-
-          git ls-files -z -- \
-            ':(glob)**/.claude-plugin/plugin.json' \
-            ':(glob)**/.codex-plugin/plugin.json' \
-            ':(glob)**/.claude-plugin/marketplace.json' \
-            ':(glob)**/.agents/plugins/marketplace.json' \
-            ':(exclude,glob)**/.git/**' \
-            ':(exclude,glob)**/node_modules/**' | while IFS= read -r -d '' PLUGIN_FILE; do
-            git add -- "$PLUGIN_FILE"
-          done
+      - name: Synchronize optional plugin versions
+        if: env.created_tags == '1' && hashFiles('.github/actions/plugin-version-sync/action.yml') != ''
+        uses: ./.github/actions/plugin-version-sync
+        with:
+          version: ${{ env.new_version }}
 
       # CHANGELOG LIMPO
       - name: Update changelog

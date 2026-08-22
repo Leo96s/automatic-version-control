@@ -9,6 +9,7 @@ const test = require("node:test");
 
 const repositoryRoot = path.resolve(__dirname, "..");
 const installerPath = path.join(repositoryRoot, "bin", "install.js");
+const pluginActionTemplatePath = path.join(repositoryRoot, ".github", "actions", "plugin-version-sync", "action.yml");
 const synchronizerTemplatePath = path.join(repositoryRoot, "scripts", "sync-plugin-versions.js");
 
 function createFixture(t) {
@@ -51,6 +52,7 @@ test("copies the plugin version synchronizer when a plugin fixture is detected",
   runInstaller(root);
 
   assert.equal(fs.existsSync(path.join(root, "scripts", "sync-plugin-versions.js")), true);
+  assert.equal(fs.existsSync(path.join(root, ".github", "actions", "plugin-version-sync", "action.yml")), true);
 });
 
 test("does not copy the plugin version synchronizer for a non-plugin fixture", (t) => {
@@ -60,6 +62,7 @@ test("does not copy the plugin version synchronizer for a non-plugin fixture", (
   runInstaller(root);
 
   assert.equal(fs.existsSync(path.join(root, "scripts", "sync-plugin-versions.js")), false);
+  assert.equal(fs.existsSync(path.join(root, ".github", "actions", "plugin-version-sync", "action.yml")), false);
 });
 
 test("removes an unchanged managed synchronizer when tracked plugin metadata is absent", (t) => {
@@ -72,6 +75,18 @@ test("removes an unchanged managed synchronizer when tracked plugin metadata is 
 
   assert.equal(fs.existsSync(installedPath), false);
   assert.match(result.stdout, /sync-plugin-versions\.js.*removido/i);
+});
+
+test("removes an unchanged managed plugin action when tracked plugin metadata is absent", (t) => {
+  const root = createFixture(t);
+  const installedPath = path.join(root, ".github", "actions", "plugin-version-sync", "action.yml");
+  fs.mkdirSync(path.dirname(installedPath), { recursive: true });
+  fs.copyFileSync(pluginActionTemplatePath, installedPath);
+
+  const result = runInstaller(root);
+
+  assert.equal(fs.existsSync(installedPath), false);
+  assert.match(result.stdout, /plugin-version-sync[\\/]action\.yml.*removido/i);
 });
 
 test("preserves and warns about a modified synchronizer when tracked plugin metadata is absent", (t) => {
@@ -101,6 +116,7 @@ test("does not enable plugin-only installation for untracked or ignored manifest
   runInstaller(root);
 
   assert.equal(fs.existsSync(path.join(root, "scripts", "sync-plugin-versions.js")), false);
+  assert.equal(fs.existsSync(path.join(root, ".github", "actions", "plugin-version-sync", "action.yml")), false);
 });
 
 test("detects plugin metadata in hidden directories while excluding .git and node_modules", (t) => {
@@ -120,6 +136,7 @@ test("detects plugin metadata in hidden directories while excluding .git and nod
   runInstaller(root);
 
   assert.equal(fs.existsSync(path.join(root, "scripts", "sync-plugin-versions.js")), true);
+  assert.equal(fs.existsSync(path.join(root, ".github", "actions", "plugin-version-sync", "action.yml")), true);
 });
 
 test("does not detect plugin metadata located only in .git or node_modules", (t) => {
@@ -135,6 +152,7 @@ test("does not detect plugin metadata located only in .git or node_modules", (t)
   runInstaller(root);
 
   assert.equal(fs.existsSync(path.join(root, "scripts", "sync-plugin-versions.js")), false);
+  assert.equal(fs.existsSync(path.join(root, ".github", "actions", "plugin-version-sync", "action.yml")), false);
 });
 
 test("rejects a symlinked scripts destination without writing outside the repository", (t) => {

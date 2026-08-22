@@ -1,0 +1,28 @@
+name: Synchronize plugin versions
+description: Synchronizes detected Claude Code and Codex plugin metadata with the release version.
+
+inputs:
+  version:
+    description: Release version, with or without the leading v.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Update plugin manifests and local marketplaces
+      shell: bash
+      env:
+        RELEASE_VERSION: ${{ inputs.version }}
+      run: |
+        VERSION="${RELEASE_VERSION#v}"
+        node scripts/sync-plugin-versions.js "$VERSION"
+
+        git ls-files -z -- \
+          ':(glob)**/.claude-plugin/plugin.json' \
+          ':(glob)**/.codex-plugin/plugin.json' \
+          ':(glob)**/.claude-plugin/marketplace.json' \
+          ':(glob)**/.agents/plugins/marketplace.json' \
+          ':(exclude,glob)**/.git/**' \
+          ':(exclude,glob)**/node_modules/**' | while IFS= read -r -d '' PLUGIN_FILE; do
+          git add -- "$PLUGIN_FILE"
+        done
