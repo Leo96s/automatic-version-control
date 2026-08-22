@@ -9,6 +9,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 * Atualiza automaticamente todos os **`package.json`/`package-lock.json`** do repositório (incluindo subpastas)
 * Gera e mantém atualizados os ficheiros **`CHANGELOG.md`** e **`RELEASE_NOTES.md`**
 * Publica automaticamente uma **GitHub Release** com as notas da versão
+* Sincroniza as versões de plugins locais detetados, sem fazer nada em repositórios sem metadados de plugins reconhecidos
 * Em projetos **Kotlin/Android ou Flutter**, compila e anexa à Release um **APK de release assinado** (ver [Build + release de APK](#build--release-de-apk-kotlinflutter))
 * Ignora commits de merge, commits de release do próprio bot (`chore(release): ...`) e mensagens sem prefixo semântico
 * Valida localmente as mensagens de commit (Conventional Commits) antes de permitir o commit
@@ -16,7 +17,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 
 ## Como funciona o versionamento
 
-Um workflow do GitHub Actions (`.github/workflows/versioning.yml`) corre em cada push para `main`/`dev` (ou manualmente via `workflow_dispatch`), percorre os commits desde a última tag e aplica as seguintes regras à mensagem de cada um:
+Um workflow do GitHub Actions (`.github/workflows/versioning.yml`) corre em cada push para `main` (ou manualmente via `workflow_dispatch`), percorre os commits desde a última tag e aplica as seguintes regras à mensagem de cada um. Mesmo quando é iniciado manualmente, só cria releases a partir de `main`:
 
 | Mensagem do commit | Efeito na versão |
 | --- | --- |
@@ -31,8 +32,20 @@ Depois de calcular a nova versão, o workflow:
 1. Cria a tag `vX.Y.Z` no commit correspondente
 2. Atualiza todos os `package.json`/`package-lock.json` rastreados pelo git
 3. Se detetar um projeto Kotlin/Android (`build.gradle.kts`/`build.gradle` com `versionCode`) ou Flutter (`pubspec.yaml`), atualiza também `versionName`/`version` para `X.Y.Z` e incrementa `versionCode`/o número de build em 1 — só um de cada por repositório, mesma deteção do [`mobile-release.yml`](#build--release-de-apk-kotlinflutter)
-4. Acrescenta uma secção nova ao `CHANGELOG.md` e reescreve o `RELEASE_NOTES.md` com as notas da versão atual
-4. Faz commit (`chore(release): vX.Y.Z [skip ci]`), push do commit e das tags, e cria a Release no GitHub
+4. Se detetar metadados de plugins Claude Code ou Codex, sincroniza os manifests e as entradas locais dos marketplaces com a versão final calculada
+5. Acrescenta uma secção nova ao `CHANGELOG.md` e reescreve o `RELEASE_NOTES.md` com as notas da versão atual
+6. Faz commit (`chore(release): vX.Y.Z [skip ci]`), push do commit e das tags, e cria a Release no GitHub
+
+### Sincronização de plugins
+
+Durante uma release, a sincronização de plugins é ativada pela deteção recursiva de metadados reconhecidos. A pesquisa inclui diretórios ocultos, mas exclui sempre `.git` e `node_modules`. Em repositórios sem esses metadados, o passo não altera nada e é um no-op. São reconhecidos os seguintes caminhos locais:
+
+* **Claude**: `.claude-plugin/plugin.json` e entradas locais em `.claude-plugin/marketplace.json`
+* **Codex**: `.codex-plugin/plugin.json` e entradas locais em `.agents/plugins/marketplace.json`
+
+A versão final calculada pela release é a que prevalece quando um único push cria várias tags de versão semântica. Os manifests de plugins reconhecidos e as entradas locais correspondentes dos marketplaces são atualizados automaticamente; fontes externas de marketplace não são alteradas. Numa entrada local do marketplace Codex, o campo `version` só é atualizado se já existir — uma entrada sem esse campo permanece sem ele.
+
+Se um manifest ou marketplace reconhecido estiver malformado, a sincronização falha e a release é abortada antes do commit de release. Para os plugins locais suportados, não é necessário editar manualmente a versão nos manifests ou catálogos.
 
 ## Instalação noutro repositório
 
@@ -48,7 +61,7 @@ O instalador (`bin/install.js`):
 * Grava o commit SHA deste pacote instalado em `.github/automatic-version-control.version` — permite a uma ferramenta externa (ex. um hook local) saber se o repositório está desatualizado sem ter de comparar conteúdo de ficheiros
 * Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
 * **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
-* **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima — só instala os dois workflows de CI, que não precisam de Node local para correr (correm no runner do GitHub Actions)
+* **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima; instala os workflows de CI aplicáveis e, se detetar metadados de plugin, também o helper `scripts/sync-plugin-versions.js`, que corre no runner do GitHub Actions e não exige Node local no repositório
 
 ### Depois de instalar
 

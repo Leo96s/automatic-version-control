@@ -5,6 +5,7 @@
   "description": "Automatic semantic versioning system based on commit messages, using GitHub Actions.",
   "bin": "bin/install.js",
   "scripts": {
+    "test": "node --test",
     "prepare": "husky || true"
   },
   "repository": {

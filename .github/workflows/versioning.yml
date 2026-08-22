@@ -178,6 +178,23 @@ jobs:
             fi
           done
 
+      - name: Synchronize plugin versions
+        if: env.created_tags == '1' && hashFiles('scripts/sync-plugin-versions.js') != ''
+        run: |
+          VERSION=${{ env.new_version }}
+          VERSION=${VERSION#v}
+          node scripts/sync-plugin-versions.js "$VERSION"
+
+          git ls-files -z -- \
+            ':(glob)**/.claude-plugin/plugin.json' \
+            ':(glob)**/.codex-plugin/plugin.json' \
+            ':(glob)**/.claude-plugin/marketplace.json' \
+            ':(glob)**/.agents/plugins/marketplace.json' \
+            ':(exclude,glob)**/.git/**' \
+            ':(exclude,glob)**/node_modules/**' | while IFS= read -r -d '' PLUGIN_FILE; do
+            git add -- "$PLUGIN_FILE"
+          done
+
       # CHANGELOG LIMPO
       - name: Update changelog
         if: env.created_tags == '1'
@@ -225,16 +242,16 @@ jobs:
           # [skip ci] evita que este commit volte a acionar o workflow
           git diff --cached --quiet || git commit -m "chore(release): ${{ env.new_version }} [skip ci]"
 
-          # 2. Empurra o commit para a branch (main/dev)
+          # 2. Move apenas a tag final para o commit com todos os metadados sincronizados.
+          # As tags intermédias continuam nos commits calculados durante o replay.
+          FINAL_TAG=${{ env.new_version }}
+          git tag -f "$FINAL_TAG" HEAD
+
+          # 3. Empurra o commit da release e a tag final corrigida.
           git push origin HEAD
+          git push origin "refs/tags/$FINAL_TAG"
 
-          # 3. Tenta empurrar cada tag individualmente
-          # Isso evita que uma tag rejeitada bloqueie todas as outras
-          for tag in $(git tag --points-at HEAD); do
-            git push origin "$tag" || echo "Tag $tag rejeitada (provavelmente contém alteração de workflow). Ignorando..."
-          done
-
-          # Tenta empurrar as outras tags criadas no replay (opcional)
+          # 4. Tenta empurrar as tags intermédias criadas no replay.
           git push origin --tags || echo "Algumas tags foram rejeitadas, mas o processo continuou."
 
       # Publica a Release no GitHub com as notas da versão atual

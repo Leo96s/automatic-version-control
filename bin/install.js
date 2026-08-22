@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 
 const templateRoot = path.join(__dirname, '..');
 const targetRoot = process.cwd();
@@ -43,16 +43,132 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function isPathInside(root, target) {
+  const relative = path.relative(root, target);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`)
+    && relative !== '..'
+    && !path.isAbsolute(relative));
+}
+
+function validateTemplateDestination(relPath) {
+  if (typeof relPath !== 'string' || relPath.length === 0
+    || path.isAbsolute(relPath)
+    || relPath.startsWith('/')
+    || relPath.startsWith('\\')
+    || /^[A-Za-z]:/.test(relPath)) {
+    throw new Error(`Refusing template destination "${relPath}": path must be strictly relative.`);
+  }
+
+  const segments = relPath.split(/[\\/]/);
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw new Error(`Refusing template destination "${relPath}": path contains an unsafe segment.`);
+  }
+
+  let realTargetRoot;
+  try {
+    realTargetRoot = fs.realpathSync(targetRoot);
+  } catch {
+    throw new Error('Refusing template destination: target root is not accessible.');
+  }
+
+  const projectedDestination = path.join(realTargetRoot, ...segments);
+  if (!isPathInside(realTargetRoot, projectedDestination)) {
+    throw new Error(`Refusing template destination "${relPath}": path escapes the target root.`);
+  }
+
+  let currentPath = targetRoot;
+  let deepestExistingPath = targetRoot;
+  let rootStats;
+  try {
+    rootStats = fs.lstatSync(targetRoot);
+  } catch {
+    throw new Error('Refusing template destination: target root cannot be inspected.');
+  }
+  if (rootStats.isSymbolicLink()) {
+    throw new Error(`Refusing template destination "${relPath}": target root is a symbolic link.`);
+  }
+
+  for (const segment of segments) {
+    currentPath = path.join(currentPath, segment);
+    let stats;
+    try {
+      stats = fs.lstatSync(currentPath);
+    } catch (error) {
+      if (error.code === 'ENOENT') break;
+      throw new Error(`Refusing template destination "${relPath}": path cannot be inspected.`);
+    }
+    deepestExistingPath = currentPath;
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Refusing template destination "${relPath}": path contains a symbolic link.`);
+    }
+  }
+
+  let deepestRealPath;
+  try {
+    deepestRealPath = fs.realpathSync(deepestExistingPath);
+  } catch {
+    throw new Error(`Refusing template destination "${relPath}": existing path is not accessible.`);
+  }
+  if (!isPathInside(realTargetRoot, deepestRealPath)) {
+    throw new Error(`Refusing template destination "${relPath}": existing path escapes the target root.`);
+  }
+
+  return path.join(targetRoot, ...segments);
+}
+
 // Estes ficheiros sao inteiramente geridos por este pacote (o utilizador nao
 // costuma personaliza-los), por isso sao sempre substituidos pela versao mais
 // recente - isto e o que garante que um projeto com um versioning.yml antigo
 // fica atualizado ao correr o instalador de novo.
 function copyTemplateFile(relPath) {
-  const dest = path.join(targetRoot, relPath);
+  const dest = validateTemplateDestination(relPath);
   const existedBefore = fs.existsSync(dest);
   ensureDir(path.dirname(dest));
   fs.copyFileSync(path.join(templateRoot, relPath), dest);
   log(existedBefore ? `OK   ${relPath} (substituído pela versão mais recente)` : `OK   ${relPath}`);
+}
+
+// Remove apenas a cópia que ainda é byte-a-byte igual ao template atual.
+// Qualquer personalização ou tipo de ficheiro inesperado é preservado.
+function removeUnchangedTemplateFile(relPath) {
+  let destinationPath;
+  try {
+    destinationPath = validateTemplateDestination(relPath);
+  } catch (error) {
+    log(`WARN ${relPath} foi preservado porque o destino não é seguro (${error.message}).`);
+    return;
+  }
+  if (!fs.existsSync(destinationPath)) {
+    log(`SKIP ${relPath} (não detetei manifests ou marketplaces de plugins).`);
+    return;
+  }
+
+  let destinationStats;
+  let destinationContent;
+  try {
+    destinationStats = fs.lstatSync(destinationPath);
+    destinationContent = fs.readFileSync(destinationPath);
+  } catch {
+    log(`WARN ${relPath} foi preservado porque não foi possível confirmar que continua gerido pelo instalador.`);
+    return;
+  }
+
+  const templateContent = fs.readFileSync(path.join(templateRoot, relPath));
+  if (destinationStats.isFile()
+    && !destinationStats.isSymbolicLink()
+    && destinationContent.equals(templateContent)) {
+    try {
+      validateTemplateDestination(relPath);
+    } catch (error) {
+      log(`WARN ${relPath} foi preservado porque o destino deixou de ser seguro (${error.message}).`);
+      return;
+    }
+    fs.rmSync(destinationPath);
+    log(`OK   ${relPath} (removido porque o repositório já não tem metadados de plugin rastreados).`);
+    return;
+  }
+
+  log(`WARN ${relPath} foi preservado porque parece ter sido modificado.`);
 }
 
 // Mesma convenção do mobile-release.yml/versioning.yml (raiz + subpastas
@@ -80,6 +196,42 @@ function detectMobileProject() {
   }
 
   return 'none';
+}
+
+function isRecognizedPluginPath(relativePath) {
+  const normalizedPath = relativePath.split(path.sep).join('/');
+  return normalizedPath === '.claude-plugin/plugin.json'
+    || normalizedPath.endsWith('/.claude-plugin/plugin.json')
+    || normalizedPath === '.codex-plugin/plugin.json'
+    || normalizedPath.endsWith('/.codex-plugin/plugin.json')
+    || normalizedPath === '.claude-plugin/marketplace.json'
+    || normalizedPath.endsWith('/.claude-plugin/marketplace.json')
+    || normalizedPath === '.agents/plugins/marketplace.json'
+    || normalizedPath.endsWith('/.agents/plugins/marketplace.json');
+}
+
+function detectPluginProject() {
+  let trackedPaths;
+  try {
+    trackedPaths = execFileSync('git', ['ls-files', '-z'], {
+      cwd: targetRoot,
+      encoding: 'buffer',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    throw new Error('Não foi possível ler os ficheiros rastreados pelo Git.');
+  }
+
+  return trackedPaths
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .some((relativePath) => {
+      const segments = relativePath.split('/');
+      return !segments.includes('.git')
+        && !segments.includes('node_modules')
+        && isRecognizedPluginPath(relativePath);
+    });
 }
 
 function ensureGitignoreHasNodeModules() {
@@ -190,6 +342,13 @@ function main() {
 
   copyTemplateFile('.github/workflows/versioning.yml');
   writeVersionMarker();
+
+  if (detectPluginProject()) {
+    copyTemplateFile('scripts/sync-plugin-versions.js');
+    log('Detetado projeto com plugin Claude Code ou Codex — sincronizador de versões instalado.');
+  } else {
+    removeUnchangedTemplateFile('scripts/sync-plugin-versions.js');
+  }
 
   const mobileType = detectMobileProject();
   if (mobileType !== 'none') {
