@@ -10,6 +10,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 * Gera e mantém atualizados os ficheiros **`CHANGELOG.md`** e **`RELEASE_NOTES.md`**
 * Publica automaticamente uma **GitHub Release** com as notas da versão
 * Sincroniza as versões de plugins locais detetados através de uma extensão instalada apenas em projetos de plugins
+* Audita dependências npm e cria/atualiza um Issue do GitHub quando encontra vulnerabilidades **high** ou **critical**
 * Em projetos **Kotlin/Android ou Flutter**, compila e anexa à Release um **APK de release assinado** (ver [Build + release de APK](#build--release-de-apk-kotlinflutter))
 * Ignora commits de merge, commits de release do próprio bot (`chore(release): ...`) e mensagens sem prefixo semântico
 * Valida localmente as mensagens de commit (Conventional Commits) antes de permitir o commit
@@ -47,6 +48,19 @@ A versão final calculada pela release é a que prevalece quando um único push 
 
 Se um manifest ou marketplace reconhecido estiver malformado, a sincronização falha e a release é abortada antes do commit de release. Para os plugins locais suportados, não é necessário editar manualmente a versão nos manifests ou catálogos.
 
+### Auditoria de dependências npm
+
+Em repositórios com `package-lock.json` ou `npm-shrinkwrap.json` rastreados pelo Git, o instalador copia `.github/workflows/npm-audit.yml` e `scripts/npm-audit.js`. O workflow:
+
+* corre em cada push para `main`, semanalmente e através de `workflow_dispatch`;
+* audita todos os diretórios com `package-lock.json` ou `npm-shrinkwrap.json` rastreados pelo Git, incluindo monorepos;
+* usa `npm audit --json --audit-level=high`, incluindo dependências de produção e desenvolvimento;
+* publica o relatório no Summary da Action;
+* cria ou atualiza o Issue aberto `[Security] npm audit requires attention` quando encontra vulnerabilidades `high`/`critical` ou não consegue concluir a auditoria;
+* termina com falha para tornar o problema visível, sem bloquear o workflow separado de versionamento/release.
+
+O workflow usa apenas `GITHUB_TOKEN`, com `contents: read` e `issues: write`. O Issue permanece aberto até a resolução e revisão manual. Um projeto com `package.json` mas sem lockfile npm rastreado não recebe este workflow, porque não há uma árvore de dependências reproduzível para auditar. A deteção inclui locks em subpastas de monorepos e exclui sempre `.git` e `node_modules`.
+
 ## Instalação noutro repositório
 
 Este pacote não está publicado no registo npm (`"private": true`) — corre-se diretamente a partir do repositório GitHub, dentro da raiz do repositório onde o queres aplicar (tem de já ser um repositório git):
@@ -61,6 +75,7 @@ O instalador (`bin/install.js`):
 * Grava o commit SHA deste pacote instalado em `.github/automatic-version-control.version` — permite a uma ferramenta externa (ex. um hook local) saber se o repositório está desatualizado sem ter de comparar conteúdo de ficheiros
 * Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
 * **Se detetar metadados de plugin**: copia apenas nesses projetos a extensão `.github/actions/plugin-version-sync/action.yml` e o helper `scripts/sync-plugin-versions.js`; o workflow genérico chama a extensão no mesmo job do release
+* **Se detetar `package-lock.json` ou `npm-shrinkwrap.json` rastreado pelo Git**: copia `.github/workflows/npm-audit.yml` e `scripts/npm-audit.js`, que fazem a auditoria periódica das dependências e notificam através de um Issue do GitHub (inclui locks em subpastas de monorepos; ignora `.git` e `node_modules`)
 * **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
 * **Se não tiver `package.json`** (caso comum em repositórios Kotlin/Android ou Flutter puros): salta toda a parte de tooling local em Node acima; instala os workflows de CI aplicáveis e, se detetar metadados de plugin, também a extensão e o helper de sincronização, que correm no runner do GitHub Actions e não exigem Node local no repositório
 
@@ -70,6 +85,8 @@ No repositório de destino, em **Settings → Actions → General**:
 
 * **Workflow permissions** → `Read and write permissions`
 * **Actions permissions** → `Allow all actions and reusable workflows`
+
+O workflow de auditoria necessita que a funcionalidade **Issues** esteja ativa no repositório. A permissão `issues: write` é declarada no próprio workflow; não são necessárias secrets adicionais.
 
 Sem isto, o workflow não consegue fazer push de tags/commits nem criar Releases.
 
@@ -128,8 +145,10 @@ Instalados em `.husky/`:
 ├── bin/install.js                    # instalador (npx github:Leo96s/automatic-version-control)
 ├── scripts/pre-commit-checks.js      # verificações de segurança pre-commit
 ├── .github/workflows/versioning.yml  # workflow genérico de versionamento semântico
+├── .github/workflows/npm-audit.yml    # auditoria npm + notificação por Issue
 ├── .github/actions/plugin-version-sync/action.yml # extensão de plugins, instalada condicionalmente
 ├── .github/workflows/mobile-release.yml # build + release de APK (Kotlin/Flutter)
+├── scripts/npm-audit.js               # descoberta e normalização dos resultados npm audit
 ├── commitlint.config.js              # regras de validação de mensagens de commit
 ├── .secretlintrc.json                # regras de deteção de segredos
 ├── .lintstagedrc.json                # o que corre sobre ficheiros staged

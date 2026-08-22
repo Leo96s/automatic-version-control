@@ -22,6 +22,11 @@ const PLUGIN_VERSION_SYNC_FILES = [
   'scripts/sync-plugin-versions.js',
 ];
 
+const NPM_AUDIT_FILES = [
+  '.github/workflows/npm-audit.yml',
+  'scripts/npm-audit.js',
+];
+
 function log(msg) {
   console.log(`[automatic-version-control] ${msg}`);
 }
@@ -135,7 +140,7 @@ function copyTemplateFile(relPath) {
 
 // Remove apenas a cópia que ainda é byte-a-byte igual ao template atual.
 // Qualquer personalização ou tipo de ficheiro inesperado é preservado.
-function removeUnchangedTemplateFile(relPath) {
+function removeUnchangedTemplateFile(relPath, missingReason = 'não detetei os metadados necessários') {
   let destinationPath;
   try {
     destinationPath = validateTemplateDestination(relPath);
@@ -144,7 +149,7 @@ function removeUnchangedTemplateFile(relPath) {
     return;
   }
   if (!fs.existsSync(destinationPath)) {
-    log(`SKIP ${relPath} (não detetei manifests ou marketplaces de plugins).`);
+    log(`SKIP ${relPath} (${missingReason}).`);
     return;
   }
 
@@ -237,6 +242,41 @@ function detectPluginProject() {
         && !segments.includes('node_modules')
         && isRecognizedPluginPath(relativePath);
     });
+}
+
+function isRecognizedNpmLockfilePath(relativePath) {
+  const segments = relativePath.split(/[\\/]/);
+  const fileName = segments[segments.length - 1];
+  return !segments.includes('.git')
+    && !segments.includes('node_modules')
+    && (fileName === 'package-lock.json' || fileName === 'npm-shrinkwrap.json');
+}
+
+function detectNpmProject() {
+  let trackedPaths;
+  try {
+    trackedPaths = execFileSync('git', [
+      'ls-files',
+      '-z',
+      '--',
+      '*package-lock.json',
+      '*npm-shrinkwrap.json',
+      ':!**/.git/**',
+      ':!**/node_modules/**',
+    ], {
+      cwd: targetRoot,
+      encoding: 'buffer',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    throw new Error('Não foi possível ler os lockfiles npm rastreados pelo Git.');
+  }
+
+  return trackedPaths
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .some(isRecognizedNpmLockfilePath);
 }
 
 function ensureGitignoreHasNodeModules() {
@@ -368,6 +408,19 @@ function main() {
   }
 
   const hasPackageJson = readPackageJson() !== null;
+  const hasNpmProject = detectNpmProject();
+
+  if (hasNpmProject) {
+    for (const relPath of NPM_AUDIT_FILES) {
+      copyTemplateFile(relPath);
+    }
+    log('Detetados lockfiles npm rastreados — workflow de auditoria de dependências instalado.');
+  } else {
+    for (const relPath of NPM_AUDIT_FILES) {
+      removeUnchangedTemplateFile(relPath, 'não detetei package-lock.json ou npm-shrinkwrap.json rastreado');
+    }
+    log('SKIP workflow de auditoria npm (não detetei lockfiles npm rastreados).');
+  }
 
   if (hasPackageJson) {
     copyTemplateFile('commitlint.config.js');

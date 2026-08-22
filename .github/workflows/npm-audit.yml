@@ -1,0 +1,78 @@
+name: npm dependency audit
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '30 8 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: npm-dependency-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    # The scheduled workflow runs on the default branch; this guard also
+    # prevents a manual run from auditing a non-main ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - name: Run npm audit
+        id: audit
+        continue-on-error: true
+        env:
+          REPORT_FILE: ${{ runner.temp }}/npm-audit-report.md
+        shell: bash
+        run: |
+          set +e
+          node scripts/npm-audit.js --report-file "$REPORT_FILE"
+          STATUS=$?
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish audit report to the workflow summary
+        if: always()
+        env:
+          REPORT_FILE: ${{ runner.temp }}/npm-audit-report.md
+        shell: bash
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            cat "$REPORT_FILE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Create or update the security issue
+        if: steps.audit.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_FILE: ${{ runner.temp }}/npm-audit-report.md
+          ISSUE_TITLE: '[Security] npm audit requires attention'
+        shell: bash
+        run: |
+          ISSUE_NUMBER=$(gh issue list \
+            --state open \
+            --limit 100 \
+            --json number,title \
+            --jq '.[] | select(.title == "[Security] npm audit requires attention") | .number' \
+            | head -n 1)
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            gh issue edit "$ISSUE_NUMBER" --body-file "$REPORT_FILE"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$REPORT_FILE"
+          fi
+
+      - name: Fail the security gate
+        if: always() && steps.audit.outputs.status != '0'
+        run: exit 1
