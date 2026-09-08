@@ -149,6 +149,13 @@ test("removes an unchanged ci.yml once no testable project is detected anymore",
   assert.equal(fs.existsSync(workflowPath), false);
 });
 
+test("checks out the repository before running the local skip-duplicate-run action", () => {
+  const workflow = fs.readFileSync(workflowTemplatePath, "utf8").replace(/\r\n/g, "\n");
+  const preJobMatch = workflow.match(/pre_job:\n([\s\S]*?)\n\n {2}\S/);
+  assert.ok(preJobMatch, "expected to find the pre_job job");
+  assert.match(preJobMatch[1], /uses: actions\/checkout@v5[\s\S]*uses: \.\/\.github\/actions\/skip-duplicate-run/, "a local action needs the repository checked out first");
+});
+
 test("references the skip-duplicate-run action and covers all three stacks", () => {
   const workflow = fs.readFileSync(workflowTemplatePath, "utf8");
 
