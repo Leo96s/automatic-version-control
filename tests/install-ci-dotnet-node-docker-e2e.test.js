@@ -152,3 +152,27 @@ test("the specific template file itself is valid YAML with citable placeholders"
   assert.match(content, /\{\{COMPOSE_ARGS\}\}/);
   assert.doesNotMatch(content, /^\s*(working-directory|cache-dependency-path):\s*\{\{/m, "placeholder-only scalar values must be quoted for YAML");
 });
+
+test("the docker-e2e job has no project-specific literal values", () => {
+  const content = fs.readFileSync(specificTemplatePath, "utf8");
+
+  assert.doesNotMatch(content, /gamesphere/i, "the template must not reference any specific project");
+
+  const envBlockMatch = content.match(/docker-e2e:[\s\S]*?env:\n([\s\S]*?)\n\n {4}steps:/);
+  assert.ok(envBlockMatch, "expected to find the docker-e2e env block");
+  const envBlock = envBlockMatch[1];
+
+  for (const varName of [
+    "POSTGRES_DB", "POSTGRES_USER", "JWT_ISSUER", "JWT_AUDIENCE",
+    "SMTP_SERVER", "SMTP_PORT", "SMTP_SENDER_EMAIL", "SMTP_SENDER_NAME",
+    "SMTP_USERNAME", "SMTP_ENABLE_SSL", "FIREBASE_PROJECT_ID", "E2E_BASE_URL",
+  ]) {
+    assert.match(envBlock, new RegExp(`${varName}: \\$\\{\\{ vars\\.CI_E2E_\\w+ \\|\\| `), `${varName} should read from a repository Variable with a generic fallback`);
+  }
+  for (const secretName of ["POSTGRES_PASSWORD", "JWT_SECRET", "INITIAL_ADMIN_PASSWORD", "SMTP_PASSWORD"]) {
+    assert.match(envBlock, new RegExp(`${secretName}: \\$\\{\\{ secrets\\.CI_E2E_\\w+ \\|\\| `), `${secretName} should read from a repository Secret with a generic fallback`);
+  }
+
+  assert.match(content, /MIGRATE_SERVICE: \$\{\{ vars\.CI_E2E_MIGRATE_SERVICE \|\| 'migrate' \}\}/);
+  assert.match(content, /HEALTHCHECK_STATUS: \$\{\{ vars\.CI_E2E_HEALTHCHECK_STATUS \|\| '200' \}\}/);
+});

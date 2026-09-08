@@ -86,11 +86,30 @@ O workflow gerado:
 
 Além do genérico, existe um registo de templates dedicados a uma combinação exata de stacks — tentados por ordem, o primeiro que corresponder ganha. Para já há só um:
 
-* **`dotnet-node-docker-e2e`** — deteta um projeto .NET com testes (`.csproj` + `.Tests.csproj`, na raiz ou em subpastas de primeiro nível), um frontend Node (qualquer framework — `package.json` numa subpasta diferente da do backend) e um `compose.yml`/`docker-compose.yml` na raiz. Gera um `ci.yml` com job de testes de backend (`dotnet test`, auditoria de pacotes), job de frontend (testes, cobertura, auditoria `npm audit`, build) e um job de Docker smoke/E2E que sobe a stack de produção via Compose, espera pela migração da base de dados e pela API ficar pronta, e corre os testes E2E do frontend — replicando a estrutura real usada pelo GameSphere.
+* **`dotnet-node-docker-e2e`** — deteta um projeto .NET com testes (`.csproj` + `.Tests.csproj`, na raiz ou em subpastas de primeiro nível), um frontend Node (qualquer framework — `package.json` numa subpasta diferente da do backend) e um `compose.yml`/`docker-compose.yml` na raiz. Gera um `ci.yml` com job de testes de backend (`dotnet test`, auditoria de pacotes), job de frontend (testes, cobertura, auditoria `npm audit`, build) e um job de Docker smoke/E2E que sobe a stack de produção via Compose, espera pela migração da base de dados e pela API ficar pronta, e corre os testes E2E do frontend.
 
-  **Aviso importante:** os valores dentro do job de Docker E2E (nomes/segredos de exemplo da base de dados, JWT, SMTP, a rota de health-check `/api/quizzes`, a porta `8080`) refletem o contrato real do GameSphere, o único projeto que originou este template até agora — **não são genéricos**. Adotar este template noutro projeto com a mesma combinação de stacks exige ajustar manualmente esses valores ao contrato da tua própria aplicação. Só os caminhos (pastas do backend/testes/frontend, nomes dos ficheiros Compose) são detetados e substituídos automaticamente.
+  O template não tem nenhum valor específico de um projeto — só os caminhos (pastas do backend/testes/frontend, nomes dos ficheiros Compose) são detetados e substituídos automaticamente na instalação. Tudo o resto (nomes/password da base de dados, JWT, SMTP, projeto Firebase, serviço de migração no Compose, rota e código HTTP do health-check, URL base do E2E) lê de **Variables e Secrets do repositório GitHub** (`Settings → Secrets and variables → Actions`), com um valor genérico por omissão para continuar a funcionar sem configuração nenhuma:
 
-* **Extensão futura**: cada template específico vive em `templates/ci/<nome>.yml` com placeholders `{{CHAVE}}` (citados em YAML sempre que o placeholder é o primeiro carácter do valor, ex. `"{{FRONTEND_DIR}}"`, para não serem lidos como *flow mapping*), tem uma função de deteção própria em `bin/install.js` e uma entrada na lista `SPECIFIC_CI_TEMPLATES`. Novas combinações de stacks (e mais parametrização do job de Docker E2E, à medida que houver mais exemplos reais para generalizar a partir deles) entram por este mecanismo, sem alterar o template genérico.
+  | Nome | Tipo | Omissão |
+  | --- | --- | --- |
+  | `CI_E2E_POSTGRES_DB` | Variable | `ci_e2e` |
+  | `CI_E2E_POSTGRES_USER` | Variable | `ci_e2e` |
+  | `CI_E2E_POSTGRES_PASSWORD` | Secret | `ci-e2e-password` |
+  | `CI_E2E_JWT_SECRET` | Secret | `ci-e2e-jwt-secret-key-with-at-least-32-bytes` |
+  | `CI_E2E_JWT_ISSUER` / `CI_E2E_JWT_AUDIENCE` | Variable | `ci-e2e` |
+  | `CI_E2E_ADMIN_EMAIL` | Variable | `e2e-admin@example.test` |
+  | `CI_E2E_ADMIN_PASSWORD` | Secret | `E2e-admin-password-123` |
+  | `CI_E2E_SMTP_SERVER` / `_PORT` / `_SENDER_EMAIL` / `_SENDER_NAME` / `_USERNAME` / `_ENABLE_SSL` | Variable | ver template |
+  | `CI_E2E_SMTP_PASSWORD` | Secret | `ci-e2e-email-password` |
+  | `CI_E2E_FIREBASE_PROJECT_ID` | Variable | vazio |
+  | `CI_E2E_BASE_URL` | Variable | `http://localhost:8080` |
+  | `CI_E2E_MIGRATE_SERVICE` | Variable | `migrate` (nome do serviço no `docker-compose`) |
+  | `CI_E2E_HEALTHCHECK_PATH` | Variable | `/health` |
+  | `CI_E2E_HEALTHCHECK_STATUS` | Variable | `200` |
+
+  Um projeto real (ex. GameSphere) configura estas Variables/Secrets uma vez, com `gh variable set CI_E2E_HEALTHCHECK_PATH --body "/api/quizzes"` / `gh secret set CI_E2E_JWT_SECRET --body "..."` ou pela UI do GitHub — sem nunca editar o `ci.yml` gerado nem este pacote precisar de saber nada específico do projeto.
+
+* **Extensão futura**: cada template específico vive em `templates/ci/<nome>.yml` com placeholders `{{CHAVE}}` (citados em YAML sempre que o placeholder é o primeiro carácter do valor, ex. `"{{FRONTEND_DIR}}"`, para não serem lidos como *flow mapping*) — reservados a factos estruturais do repositório (caminhos, nomes de ficheiros), nunca a segredos ou configuração da aplicação, que seguem o padrão `vars`/`secrets` acima. Cada template tem uma função de deteção própria em `bin/install.js` e uma entrada na lista `SPECIFIC_CI_TEMPLATES`; novas combinações de stacks entram por este mecanismo, sem alterar o template genérico.
 
 ### Evitar execuções duplicadas de CI
 

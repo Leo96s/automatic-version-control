@@ -95,33 +95,33 @@ jobs:
       - backend
       - frontend
     runs-on: ubuntu-latest
-    # AVISO: os valores abaixo (nomes/segredos de exemplo da base de dados,
-    # JWT, SMTP, endpoint de health-check, porta) refletem o contrato real
-    # do primeiro projeto que originou este template (GameSphere). Este
-    # template ainda não tem exemplos suficientes de outros projetos com a
-    # mesma stack para os inferir genericamente — ajusta-os ao contrato da
-    # tua própria aplicação (docker-compose, variáveis de ambiente, rota de
-    # health-check) antes de confiares neste workflow.
+    # Nenhum valor abaixo é específico de um projeto: todos vêm de Variables
+    # (não sensíveis) ou Secrets (sensíveis) do repositório GitHub, com um
+    # valor genérico por omissão via "||" para continuar a funcionar sem
+    # nenhuma configuração. Configura em Settings -> Secrets and variables
+    # -> Actions (ver README) para usar os valores reais da tua aplicação —
+    # nenhuma alteração a este ficheiro é necessária.
     env:
-      POSTGRES_DB: app_ci
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app-ci-password
-      DATABASE_CONNECTION_STRING: Host=db;Port=5432;Database=app_ci;Username=app;Password=app-ci-password
-      JWT_SECRET: app-ci-jwt-secret-key-with-at-least-32-bytes
-      JWT_ISSUER: app-ci
-      JWT_AUDIENCE: app-ci
-      INITIAL_ADMIN_EMAIL: e2e-admin@example.test
-      INITIAL_ADMIN_PASSWORD: E2e-admin-password-123
-      SMTP_SERVER: smtp.example.test
-      SMTP_PORT: 2525
-      SMTP_SENDER_EMAIL: no-reply@example.test
-      SMTP_SENDER_NAME: CI
-      SMTP_USERNAME: ci-user
-      SMTP_PASSWORD: ci-email-password
-      SMTP_ENABLE_SSL: false
-      E2E_BASE_URL: http://localhost:8080
-      E2E_ADMIN_EMAIL: e2e-admin@example.test
-      E2E_ADMIN_PASSWORD: E2e-admin-password-123
+      POSTGRES_DB: ${{ vars.CI_E2E_POSTGRES_DB || 'ci_e2e' }}
+      POSTGRES_USER: ${{ vars.CI_E2E_POSTGRES_USER || 'ci_e2e' }}
+      POSTGRES_PASSWORD: ${{ secrets.CI_E2E_POSTGRES_PASSWORD || 'ci-e2e-password' }}
+      DATABASE_CONNECTION_STRING: ${{ format('Host=db;Port=5432;Database={0};Username={1};Password={2}', vars.CI_E2E_POSTGRES_DB || 'ci_e2e', vars.CI_E2E_POSTGRES_USER || 'ci_e2e', secrets.CI_E2E_POSTGRES_PASSWORD || 'ci-e2e-password') }}
+      JWT_SECRET: ${{ secrets.CI_E2E_JWT_SECRET || 'ci-e2e-jwt-secret-key-with-at-least-32-bytes' }}
+      JWT_ISSUER: ${{ vars.CI_E2E_JWT_ISSUER || 'ci-e2e' }}
+      JWT_AUDIENCE: ${{ vars.CI_E2E_JWT_AUDIENCE || 'ci-e2e' }}
+      INITIAL_ADMIN_EMAIL: ${{ vars.CI_E2E_ADMIN_EMAIL || 'e2e-admin@example.test' }}
+      INITIAL_ADMIN_PASSWORD: ${{ secrets.CI_E2E_ADMIN_PASSWORD || 'E2e-admin-password-123' }}
+      SMTP_SERVER: ${{ vars.CI_E2E_SMTP_SERVER || 'smtp.example.test' }}
+      SMTP_PORT: ${{ vars.CI_E2E_SMTP_PORT || '2525' }}
+      SMTP_SENDER_EMAIL: ${{ vars.CI_E2E_SMTP_SENDER_EMAIL || 'no-reply@example.test' }}
+      SMTP_SENDER_NAME: ${{ vars.CI_E2E_SMTP_SENDER_NAME || 'CI' }}
+      SMTP_USERNAME: ${{ vars.CI_E2E_SMTP_USERNAME || 'ci-user' }}
+      SMTP_PASSWORD: ${{ secrets.CI_E2E_SMTP_PASSWORD || 'ci-e2e-email-password' }}
+      SMTP_ENABLE_SSL: ${{ vars.CI_E2E_SMTP_ENABLE_SSL || 'false' }}
+      FIREBASE_PROJECT_ID: ${{ vars.CI_E2E_FIREBASE_PROJECT_ID || '' }}
+      E2E_BASE_URL: ${{ vars.CI_E2E_BASE_URL || 'http://localhost:8080' }}
+      E2E_ADMIN_EMAIL: ${{ vars.CI_E2E_ADMIN_EMAIL || 'e2e-admin@example.test' }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.CI_E2E_ADMIN_PASSWORD || 'E2e-admin-password-123' }}
 
     steps:
       - name: Check out repository
@@ -145,21 +145,24 @@ jobs:
       - name: Start production Compose stack
         run: docker compose {{COMPOSE_ARGS}} up -d --build
 
-      # Ajusta o health-check abaixo (endpoint /api/quizzes, porta 8080, e o
-      # nome do serviço "migrate") ao contrato real da tua aplicação.
+      # Nome do serviço de migração no docker-compose, o endpoint de
+      # health-check e o código HTTP esperado vêm todos de Variables do
+      # repositório, com um valor genérico por omissão (ver README).
       - name: Wait for database migration
         shell: bash
+        env:
+          MIGRATE_SERVICE: ${{ vars.CI_E2E_MIGRATE_SERVICE || 'migrate' }}
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            migrate_id="$(docker compose {{COMPOSE_ARGS}} ps -a -q migrate)"
+            migrate_id="$(docker compose {{COMPOSE_ARGS}} ps -a -q "$MIGRATE_SERVICE")"
             if [ -n "$migrate_id" ]; then
               state="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$migrate_id")"
               if [ "$state" = "exited:0" ]; then
                 exit 0
               fi
               if [[ "$state" == exited:* ]]; then
-                docker compose {{COMPOSE_ARGS}} logs migrate
+                docker compose {{COMPOSE_ARGS}} logs "$MIGRATE_SERVICE"
                 exit 1
               fi
             fi
@@ -170,11 +173,14 @@ jobs:
 
       - name: Wait for API readiness
         shell: bash
+        env:
+          HEALTHCHECK_URL: ${{ format('{0}{1}', vars.CI_E2E_BASE_URL || 'http://localhost:8080', vars.CI_E2E_HEALTHCHECK_PATH || '/health') }}
+          HEALTHCHECK_STATUS: ${{ vars.CI_E2E_HEALTHCHECK_STATUS || '200' }}
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
-            status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/quizzes || true)"
-            if [ "$status" = "401" ]; then
+            status="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTHCHECK_URL" || true)"
+            if [ "$status" = "$HEALTHCHECK_STATUS" ]; then
               exit 0
             fi
             sleep 2
