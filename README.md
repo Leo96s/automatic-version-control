@@ -107,7 +107,29 @@ Além do genérico, existe um registo de templates dedicados a uma combinação 
   | `CI_E2E_HEALTHCHECK_PATH` | Variable | `/health` |
   | `CI_E2E_HEALTHCHECK_STATUS` | Variable | `200` |
 
-  Um projeto real (ex. GameSphere) configura estas Variables/Secrets uma vez, com `gh variable set CI_E2E_HEALTHCHECK_PATH --body "/api/quizzes"` / `gh secret set CI_E2E_JWT_SECRET --body "..."` ou pela UI do GitHub — sem nunca editar o `ci.yml` gerado nem este pacote precisar de saber nada específico do projeto.
+  Um projeto real (ex. GameSphere) configura estas Variables/Secrets uma vez — sem nunca editar o `ci.yml` gerado nem este pacote precisar de saber nada específico do projeto. Só é preciso definir as que queres substituir à omissão; as restantes ficam com o valor genérico da tabela.
+
+  **Pela aplicação do GitHub:**
+
+  1. No repositório, abre **Settings → Secrets and variables → Actions**.
+  2. Para um valor não sensível (ex. `CI_E2E_HEALTHCHECK_PATH`): separador **Variables** → **New repository variable** → nome (`CI_E2E_HEALTHCHECK_PATH`) e valor (`/api/quizzes`) → **Add variable**.
+  3. Para um valor sensível (ex. `CI_E2E_JWT_SECRET`): separador **Secrets** → **New repository secret** → nome e valor → **Add secret**.
+  4. Repete para cada nome da tabela que precises de substituir. Não é preciso recorrer nem alterar nada no workflow — o próximo push já lê os valores novos.
+
+  **Pelo `gh` CLI:**
+
+  ```bash
+  # Variables (não sensíveis) — o valor fica visível em `gh variable list`
+  gh variable set CI_E2E_HEALTHCHECK_PATH --body "/api/quizzes"
+  gh variable set CI_E2E_HEALTHCHECK_STATUS --body "401"
+  gh variable set CI_E2E_FIREBASE_PROJECT_ID --body "gamesphere-9f7dc"
+
+  # Secrets — sem --body, o gh pede o valor de forma interativa (não fica no histórico da shell)
+  gh secret set CI_E2E_JWT_SECRET
+  gh secret set CI_E2E_POSTGRES_PASSWORD
+  ```
+
+  Confirmar o que ficou definido: `gh variable list` e `gh secret list` (este último só mostra os nomes — o GitHub nunca devolve o valor de um secret depois de guardado).
 
 * **Extensão futura**: cada template específico vive em `templates/ci/<nome>.yml` com placeholders `{{CHAVE}}` (citados em YAML sempre que o placeholder é o primeiro carácter do valor, ex. `"{{FRONTEND_DIR}}"`, para não serem lidos como *flow mapping*) — reservados a factos estruturais do repositório (caminhos, nomes de ficheiros), nunca a segredos ou configuração da aplicação, que seguem o padrão `vars`/`secrets` acima. Cada template tem uma função de deteção própria em `bin/install.js` e uma entrada na lista `SPECIFIC_CI_TEMPLATES`; novas combinações de stacks entram por este mecanismo, sem alterar o template genérico.
 
