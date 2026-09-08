@@ -64,21 +64,33 @@ O workflow usa apenas `GITHUB_TOKEN`, com `contents: read` e `issues: write`. O 
 
 ### Testes automáticos de CI (`ci.yml`)
 
-O instalador deteta, na raiz e nas subpastas de primeiro nível (mesma convenção do `mobile-release.yml`):
+O instalador escolhe entre dois tipos de `.github/workflows/ci.yml`, por esta ordem: primeiro tenta um **template específico** para uma combinação de stacks reconhecida (ver abaixo); só se nenhum corresponder, cai no **template genérico**. Em ambos os casos, uma vez decidido instalar `ci.yml`, ele é **sempre substituído pela versão mais recente ao voltar a correr o instalador, mesmo que a versão existente tenha sido personalizada manualmente** — só é removido, ou preservado se personalizado, quando deixa de haver qualquer stack reconhecida (nem específica nem genérica).
+
+#### Template genérico
+
+Deteta, na raiz e nas subpastas de primeiro nível (mesma convenção do `mobile-release.yml`):
 
 * **Node**: `package.json` com um script `test` definido;
 * **Gradle/Kotlin**: `gradlew` + `settings.gradle[.kts]`;
 * **Flutter**: `pubspec.yaml` com secção `flutter:`.
-
-Assim que deteta pelo menos uma destas stacks, copia `.github/workflows/ci.yml` — workflow genérico gerido por este pacote, **sempre substituído pela versão mais recente ao voltar a correr o instalador, mesmo que a versão existente tenha sido personalizada manualmente**. Sem nenhuma destas stacks detetada, uma cópia ainda byte-a-byte igual ao template anterior é removida; uma cópia personalizada é sempre preservada.
-
-**Aviso:** a deteção é por stack, não por projeto inteiro. Um repositório com várias linguagens (ex. backend em .NET + frontend em Node) recebe o `ci.yml` gerado assim que só uma das três stacks reconhecidas for encontrada — mas o workflow gerado só sabe testar Node, Gradle/Kotlin e Flutter; outras stacks (.NET, Python, Go, etc.) não são cobertas por ele. Se já tinhas um `ci.yml` próprio a testar essas outras stacks (ou com lógica adicional, como um E2E com Docker), ele é substituído na mesma da próxima vez que correres o instalador — não há forma de manter uma versão personalizada num projeto onde uma das três stacks é detetada.
 
 O workflow gerado:
 
 1. Um job `pre_job` usa a extensão `skip-duplicate-run` (ver abaixo) para nunca testar duas vezes o mesmo commit.
 2. Um job `detect` confirma outra vez em runtime, como rede de segurança, qual das três stacks está presente e em que pasta.
 3. Um job independente por stack (`node-tests`, `gradle-tests`, `flutter-tests`) instala as dependências e corre os testes (`npm test`, `./gradlew test`, `flutter test`, respetivamente) — só corre(m) o(s) job(s) da(s) stack(s) realmente presentes.
+
+**Aviso:** a deteção é por stack, não por projeto inteiro. Um repositório com várias linguagens (ex. backend numa linguagem não reconhecida + frontend em Node) recebe este `ci.yml` assim que só uma das três stacks reconhecidas for encontrada — mas o workflow só sabe testar Node, Gradle/Kotlin e Flutter; o resto não é coberto.
+
+#### Templates específicos
+
+Além do genérico, existe um registo de templates dedicados a uma combinação exata de stacks — tentados por ordem, o primeiro que corresponder ganha. Para já há só um:
+
+* **`dotnet-node-docker-e2e`** — deteta um projeto .NET com testes (`.csproj` + `.Tests.csproj`, na raiz ou em subpastas de primeiro nível), um frontend Node (qualquer framework — `package.json` numa subpasta diferente da do backend) e um `compose.yml`/`docker-compose.yml` na raiz. Gera um `ci.yml` com job de testes de backend (`dotnet test`, auditoria de pacotes), job de frontend (testes, cobertura, auditoria `npm audit`, build) e um job de Docker smoke/E2E que sobe a stack de produção via Compose, espera pela migração da base de dados e pela API ficar pronta, e corre os testes E2E do frontend — replicando a estrutura real usada pelo GameSphere.
+
+  **Aviso importante:** os valores dentro do job de Docker E2E (nomes/segredos de exemplo da base de dados, JWT, SMTP, a rota de health-check `/api/quizzes`, a porta `8080`) refletem o contrato real do GameSphere, o único projeto que originou este template até agora — **não são genéricos**. Adotar este template noutro projeto com a mesma combinação de stacks exige ajustar manualmente esses valores ao contrato da tua própria aplicação. Só os caminhos (pastas do backend/testes/frontend, nomes dos ficheiros Compose) são detetados e substituídos automaticamente.
+
+* **Extensão futura**: cada template específico vive em `templates/ci/<nome>.yml` com placeholders `{{CHAVE}}` (citados em YAML sempre que o placeholder é o primeiro carácter do valor, ex. `"{{FRONTEND_DIR}}"`, para não serem lidos como *flow mapping*), tem uma função de deteção própria em `bin/install.js` e uma entrada na lista `SPECIFIC_CI_TEMPLATES`. Novas combinações de stacks (e mais parametrização do job de Docker E2E, à medida que houver mais exemplos reais para generalizar a partir deles) entram por este mecanismo, sem alterar o template genérico.
 
 ### Evitar execuções duplicadas de CI
 
@@ -120,7 +132,7 @@ O instalador (`bin/install.js`):
 * Copia sempre `.github/actions/skip-duplicate-run/action.yml` (ver [Evitar execuções duplicadas de CI](#evitar-execuções-duplicadas-de-ci)) — um ficheiro estático que só tem efeito se estiver referenciado por um workflow, seja o `ci.yml` gerado (ver abaixo) ou um workflow teu
 * Grava o commit SHA deste pacote instalado em `.github/automatic-version-control.version` — permite a uma ferramenta externa (ex. um hook local) saber se o repositório está desatualizado sem ter de comparar conteúdo de ficheiros
 * Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
-* **Se detetar um script `test` num `package.json` (raiz ou subpasta de primeiro nível), ou um projeto Gradle/Kotlin ou Flutter**: copia `.github/workflows/ci.yml` (ver [Testes automáticos de CI](#testes-automáticos-de-ci-ciyml)) — **substituindo sempre qualquer `ci.yml` já existente**, incluindo um escrito à mão
+* **Se detetar um projeto .NET com testes + frontend Node + Docker Compose, um script `test` num `package.json` (raiz ou subpasta de primeiro nível), ou um projeto Gradle/Kotlin ou Flutter**: gera `.github/workflows/ci.yml`, a partir do template específico correspondente ou do genérico (ver [Testes automáticos de CI](#testes-automáticos-de-ci-ciyml)) — **substituindo sempre qualquer `ci.yml` já existente**, incluindo um escrito à mão
 * **Se detetar metadados de plugin**: copia apenas nesses projetos a extensão `.github/actions/plugin-version-sync/action.yml` e o helper `scripts/sync-plugin-versions.js`; o workflow genérico chama a extensão no mesmo job do release
 * **Se detetar `package-lock.json` ou `npm-shrinkwrap.json` rastreado pelo Git**: copia `.github/workflows/npm-audit.yml` e `scripts/npm-audit.js`, que fazem a auditoria periódica das dependências e notificam através de um Issue do GitHub (inclui locks em subpastas de monorepos; ignora `.git` e `node_modules`)
 * **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
@@ -195,7 +207,8 @@ Instalados em `.husky/`:
 ├── .github/workflows/npm-audit.yml    # auditoria npm + notificação por Issue
 ├── .github/actions/plugin-version-sync/action.yml # extensão de plugins, instalada condicionalmente
 ├── .github/actions/skip-duplicate-run/action.yml # evita CI duplicado, copiado sempre
-├── .github/workflows/ci.yml           # testes Node/Gradle/Flutter, instalado condicionalmente
+├── .github/workflows/ci.yml           # template genérico (Node/Gradle/Flutter), instalado condicionalmente
+├── templates/ci/dotnet-node-docker-e2e.yml # template específico .NET+Node+Docker E2E, com placeholders
 ├── .github/workflows/mobile-release.yml # build + release de APK (Kotlin/Flutter)
 ├── scripts/npm-audit.js               # descoberta e normalização dos resultados npm audit
 ├── commitlint.config.js              # regras de validação de mensagens de commit

@@ -1,0 +1,196 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre_job:
+    name: Skip duplicate runs
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip.outputs.should_skip }}
+    steps:
+      - id: skip
+        uses: ./.github/actions/skip-duplicate-run
+
+  backend:
+    name: Backend tests
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run backend tests
+        run: dotnet test {{BACKEND_TEST_PROJECT}} --configuration Release
+
+      - name: Audit backend packages
+        run: dotnet list {{BACKEND_PROJECT}} package --vulnerable --include-transitive
+
+  frontend:
+    name: Frontend tests and build
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "{{FRONTEND_DIR}}/package-lock.json"
+
+      - name: Install frontend dependencies
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm ci
+
+      - name: Install Chromium for browser tests
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npx playwright install --with-deps chromium
+
+      - name: Run frontend tests
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm test
+
+      - name: Run frontend coverage gate
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm run test:coverage
+
+      - name: Audit frontend packages
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm audit --audit-level=high
+
+      - name: Build frontend
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm run build
+
+  docker-e2e:
+    name: Docker smoke and E2E
+    needs:
+      - backend
+      - frontend
+    runs-on: ubuntu-latest
+    # AVISO: os valores abaixo (nomes/segredos de exemplo da base de dados,
+    # JWT, SMTP, endpoint de health-check, porta) refletem o contrato real
+    # do primeiro projeto que originou este template (GameSphere). Este
+    # template ainda não tem exemplos suficientes de outros projetos com a
+    # mesma stack para os inferir genericamente — ajusta-os ao contrato da
+    # tua própria aplicação (docker-compose, variáveis de ambiente, rota de
+    # health-check) antes de confiares neste workflow.
+    env:
+      POSTGRES_DB: app_ci
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app-ci-password
+      DATABASE_CONNECTION_STRING: Host=db;Port=5432;Database=app_ci;Username=app;Password=app-ci-password
+      JWT_SECRET: app-ci-jwt-secret-key-with-at-least-32-bytes
+      JWT_ISSUER: app-ci
+      JWT_AUDIENCE: app-ci
+      INITIAL_ADMIN_EMAIL: e2e-admin@example.test
+      INITIAL_ADMIN_PASSWORD: E2e-admin-password-123
+      SMTP_SERVER: smtp.example.test
+      SMTP_PORT: 2525
+      SMTP_SENDER_EMAIL: no-reply@example.test
+      SMTP_SENDER_NAME: CI
+      SMTP_USERNAME: ci-user
+      SMTP_PASSWORD: ci-email-password
+      SMTP_ENABLE_SSL: false
+      E2E_BASE_URL: http://localhost:8080
+      E2E_ADMIN_EMAIL: e2e-admin@example.test
+      E2E_ADMIN_PASSWORD: E2e-admin-password-123
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: "{{FRONTEND_DIR}}/package-lock.json"
+
+      - name: Install frontend dependencies
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm ci
+
+      - name: Install Chromium for E2E
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npx playwright install --with-deps chromium
+
+      - name: Start production Compose stack
+        run: docker compose {{COMPOSE_ARGS}} up -d --build
+
+      # Ajusta o health-check abaixo (endpoint /api/quizzes, porta 8080, e o
+      # nome do serviço "migrate") ao contrato real da tua aplicação.
+      - name: Wait for database migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            migrate_id="$(docker compose {{COMPOSE_ARGS}} ps -a -q migrate)"
+            if [ -n "$migrate_id" ]; then
+              state="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$migrate_id")"
+              if [ "$state" = "exited:0" ]; then
+                exit 0
+              fi
+              if [[ "$state" == exited:* ]]; then
+                docker compose {{COMPOSE_ARGS}} logs migrate
+                exit 1
+              fi
+            fi
+            sleep 2
+          done
+          docker compose {{COMPOSE_ARGS}} ps -a
+          exit 1
+
+      - name: Wait for API readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/quizzes || true)"
+            if [ "$status" = "401" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API did not become ready in time (last status: $status)"
+          docker compose {{COMPOSE_ARGS}} ps -a
+          exit 1
+
+      - name: Run Docker smoke and E2E tests
+        working-directory: "{{FRONTEND_DIR}}"
+        run: npm run test:e2e
+
+      - name: Show Compose diagnostics on failure
+        if: failure()
+        run: docker compose {{COMPOSE_ARGS}} ps -a && docker compose {{COMPOSE_ARGS}} logs --no-color --tail 200
+
+      - name: Stop Compose stack
+        if: always()
+        run: docker compose {{COMPOSE_ARGS}} down -v

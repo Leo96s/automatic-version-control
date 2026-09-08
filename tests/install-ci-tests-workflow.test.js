@@ -61,7 +61,7 @@ test("installs ci.yml for a root Node project with a test script", (t) => {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(fs.existsSync(path.join(root, ".github", "workflows", "ci.yml")), true);
-  assert.match(result.stdout, /Detetados testes.*ci\.yml instalado/i);
+  assert.match(result.stdout, /Detetados testes.*ci\.yml gen[eé]rico instalado/i);
 });
 
 test("installs ci.yml for a Node test project in a first-level subdirectory", (t) => {

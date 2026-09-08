@@ -239,6 +239,106 @@ function detectNodeTestProject() {
   return null;
 }
 
+// Mesma convenção de deteção (raiz + subpastas de primeiro nível). Um
+// projeto .csproj cujo nome de ficheiro ou pasta termina em ".Tests" é
+// tratado como o projeto de testes; o primeiro outro .csproj encontrado é
+// tratado como o projeto principal do backend.
+function findCsprojFiles(dir) {
+  const base = path.join(targetRoot, dir);
+  let entries;
+  try {
+    entries = fs.readdirSync(base);
+  } catch {
+    return [];
+  }
+  return entries.filter((name) => name.toLowerCase().endsWith('.csproj'));
+}
+
+// Deteta a combinação backend .NET + frontend Node + Docker Compose que
+// origina o template templates/ci/dotnet-node-docker-e2e.yml (ver
+// SPECIFIC_CI_TEMPLATES). Esta é, para já, a única stack com template
+// dedicado — outras combinações (ex. outra linguagem de backend) caem no
+// ci.yml genérico até existir mais que um projeto real para generalizar a
+// partir dele.
+function detectDotnetDockerE2eProject() {
+  const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
+  const dirs = ['.', ...entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+    .map((e) => e.name)];
+
+  let backend = null;
+  let backendTest = null;
+  for (const d of dirs) {
+    for (const file of findCsprojFiles(d)) {
+      const isTestProject = /\.Tests\.csproj$/i.test(file) || d.toLowerCase().endsWith('.tests');
+      if (isTestProject) {
+        if (!backendTest) backendTest = `${d}/${file}`;
+      } else if (!backend) {
+        backend = `${d}/${file}`;
+      }
+    }
+  }
+  if (!backend || !backendTest) return null;
+
+  const backendDirs = new Set([backend.split('/')[0], backendTest.split('/')[0]]);
+  let frontendDir = null;
+  for (const d of dirs) {
+    if (backendDirs.has(d)) continue;
+    if (fs.existsSync(path.join(targetRoot, d, 'package.json'))) {
+      frontendDir = d;
+      break;
+    }
+  }
+  if (!frontendDir) return null;
+
+  const composeFile = ['compose.yml', 'docker-compose.yml'].find((f) => fs.existsSync(path.join(targetRoot, f)));
+  if (!composeFile) return null;
+  const composeOverride = ['compose.prod.yml', 'docker-compose.prod.yml'].find((f) => fs.existsSync(path.join(targetRoot, f)));
+  const composeArgs = composeOverride ? `-f ${composeFile} -f ${composeOverride}` : `-f ${composeFile}`;
+
+  return {
+    BACKEND_PROJECT: backend,
+    BACKEND_TEST_PROJECT: backendTest,
+    FRONTEND_DIR: frontendDir,
+    COMPOSE_ARGS: composeArgs,
+  };
+}
+
+// Templates de CI dedicados a uma combinação específica de stacks,
+// tentados por ordem antes do ci.yml genérico. Para adicionar um novo no
+// futuro: escrever o template em templates/ci/<nome>.yml com placeholders
+// {{CHAVE}} (citar o valor em YAML sempre que o placeholder for o
+// primeiro carácter, ex. "{{FRONTEND_DIR}}", para não ser lido como flow
+// mapping), escrever a função de deteção correspondente, e acrescentar
+// uma entrada aqui.
+const SPECIFIC_CI_TEMPLATES = [
+  {
+    id: 'dotnet-node-docker-e2e',
+    detect: detectDotnetDockerE2eProject,
+    templatePath: 'templates/ci/dotnet-node-docker-e2e.yml',
+  },
+];
+
+function renderTemplate(content, vars) {
+  return content.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    if (!(key in vars)) {
+      throw new Error(`Template placeholder desconhecido: ${match}`);
+    }
+    return vars[key];
+  });
+}
+
+function installRenderedCiTemplate(templateRelPath, vars) {
+  const relPath = '.github/workflows/ci.yml';
+  const dest = validateTemplateDestination(relPath);
+  const raw = fs.readFileSync(path.join(templateRoot, templateRelPath), 'utf8');
+  const rendered = renderTemplate(raw, vars);
+  const existedBefore = fs.existsSync(dest);
+  ensureDir(path.dirname(dest));
+  fs.writeFileSync(dest, rendered);
+  log(existedBefore ? `OK   ${relPath} (gerado a partir de ${templateRelPath}, substituído)` : `OK   ${relPath} (gerado a partir de ${templateRelPath})`);
+}
+
 function isRecognizedPluginPath(relativePath) {
   const normalizedPath = relativePath.split(path.sep).join('/');
   return normalizedPath === '.claude-plugin/plugin.json'
@@ -439,17 +539,26 @@ function main() {
     log('SKIP .github/workflows/mobile-release.yml (não detetei projeto Kotlin/Android nem Flutter).');
   }
 
-  const nodeTestDir = detectNodeTestProject();
-  if (nodeTestDir !== null || mobileType !== 'none') {
-    for (const relPath of CI_TESTS_FILES) {
-      copyTemplateFile(relPath);
-    }
-    log('Detetados testes (Node, Gradle/Kotlin ou Flutter) — ci.yml instalado/atualizado.');
+  const specificTemplate = SPECIFIC_CI_TEMPLATES
+    .map((template) => ({ template, vars: template.detect() }))
+    .find((match) => match.vars !== null);
+
+  if (specificTemplate) {
+    installRenderedCiTemplate(specificTemplate.template.templatePath, specificTemplate.vars);
+    log(`Detetada stack específica (${specificTemplate.template.id}) — ci.yml gerado a partir do template dedicado.`);
   } else {
-    for (const relPath of CI_TESTS_FILES) {
-      removeUnchangedTemplateFile(relPath, 'não detetei testes Node, Gradle/Kotlin ou Flutter');
+    const nodeTestDir = detectNodeTestProject();
+    if (nodeTestDir !== null || mobileType !== 'none') {
+      for (const relPath of CI_TESTS_FILES) {
+        copyTemplateFile(relPath);
+      }
+      log('Detetados testes (Node, Gradle/Kotlin ou Flutter) — ci.yml genérico instalado/atualizado.');
+    } else {
+      for (const relPath of CI_TESTS_FILES) {
+        removeUnchangedTemplateFile(relPath, 'não detetei testes Node, Gradle/Kotlin ou Flutter');
+      }
+      log('SKIP .github/workflows/ci.yml (não detetei testes Node, Gradle/Kotlin ou Flutter).');
     }
-    log('SKIP .github/workflows/ci.yml (não detetei testes Node, Gradle/Kotlin ou Flutter).');
   }
 
   const hasPackageJson = readPackageJson() !== null;
