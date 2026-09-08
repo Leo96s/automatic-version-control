@@ -1,0 +1,16 @@
+name: Skip duplicate run
+description: Detects whether the current commit already completed this workflow successfully elsewhere (e.g. it was already tested on another branch before a fast-forward merge), so the calling workflow can skip its remaining jobs instead of testing the same commit twice.
+
+outputs:
+  should_skip:
+    description: "'true' when this commit already had a successful run of this workflow and the calling workflow should skip its remaining jobs."
+    value: ${{ steps.skip_check.outputs.should_skip }}
+
+runs:
+  using: composite
+  steps:
+    - id: skip_check
+      uses: fkirc/skip-duplicate-actions@v5
+      with:
+        skip_after_successful_duplicate: 'true'
+        do_not_skip: '["workflow_dispatch", "schedule", "merge_group", "pull_request"]'

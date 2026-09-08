@@ -27,6 +27,10 @@ const NPM_AUDIT_FILES = [
   'scripts/npm-audit.js',
 ];
 
+const CI_TESTS_FILES = [
+  '.github/workflows/ci.yml',
+];
+
 function log(msg) {
   console.log(`[automatic-version-control] ${msg}`);
 }
@@ -208,6 +212,33 @@ function detectMobileProject() {
   return 'none';
 }
 
+// Mesma convenção de deteção (raiz + subpastas de primeiro nível) usada por
+// detectMobileProject — decide se há um script "test" para correr em
+// ci.yml, sem exigir lockfile (ao contrário de detectNpmProject, que serve
+// para decidir a auditoria de dependências, não os testes).
+function detectNodeTestProject() {
+  const entries = fs.readdirSync(targetRoot, { withFileTypes: true });
+  const dirs = ['.', ...entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+    .map((e) => e.name)];
+
+  for (const d of dirs) {
+    const pkgPath = path.join(targetRoot, d, 'package.json');
+    if (!fs.existsSync(pkgPath)) continue;
+    let pkg;
+    try {
+      pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (pkg.scripts && typeof pkg.scripts.test === 'string' && pkg.scripts.test.trim()) {
+      return d;
+    }
+  }
+
+  return null;
+}
+
 function isRecognizedPluginPath(relativePath) {
   const normalizedPath = relativePath.split(path.sep).join('/');
   return normalizedPath === '.claude-plugin/plugin.json'
@@ -386,6 +417,7 @@ function main() {
   }
 
   copyTemplateFile('.github/workflows/versioning.yml');
+  copyTemplateFile('.github/actions/skip-duplicate-run/action.yml');
   writeVersionMarker();
 
   if (detectPluginProject()) {
@@ -405,6 +437,19 @@ function main() {
     log(`Detetado projeto ${mobileType === 'gradle' ? 'Kotlin/Android' : 'Flutter'} — mobile-release.yml instalado.`);
   } else {
     log('SKIP .github/workflows/mobile-release.yml (não detetei projeto Kotlin/Android nem Flutter).');
+  }
+
+  const nodeTestDir = detectNodeTestProject();
+  if (nodeTestDir !== null || mobileType !== 'none') {
+    for (const relPath of CI_TESTS_FILES) {
+      copyTemplateFile(relPath);
+    }
+    log('Detetados testes (Node, Gradle/Kotlin ou Flutter) — ci.yml instalado/atualizado.');
+  } else {
+    for (const relPath of CI_TESTS_FILES) {
+      removeUnchangedTemplateFile(relPath, 'não detetei testes Node, Gradle/Kotlin ou Flutter');
+    }
+    log('SKIP .github/workflows/ci.yml (não detetei testes Node, Gradle/Kotlin ou Flutter).');
   }
 
   const hasPackageJson = readPackageJson() !== null;

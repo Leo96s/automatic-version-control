@@ -1,0 +1,139 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre_job:
+    name: Skip duplicate runs
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip.outputs.should_skip }}
+    steps:
+      - id: skip
+        uses: ./.github/actions/skip-duplicate-run
+
+  detect:
+    name: Detect testable stacks
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      node_dir: ${{ steps.detect.outputs.node_dir }}
+      gradle_dir: ${{ steps.detect.outputs.gradle_dir }}
+      flutter_dir: ${{ steps.detect.outputs.flutter_dir }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Mesma convenção de deteção (raiz + subpastas de primeiro nível) do
+      # instalador (bin/install.js) e do mobile-release.yml — repetida aqui
+      # como rede de segurança caso a estrutura do repositório mude entre
+      # instalações.
+      - name: Detect Node, Gradle and Flutter test targets
+        id: detect
+        shell: bash
+        run: |
+          shopt -s nullglob
+          NODE_DIR=""
+          for d in . */; do
+            d="${d%/}"
+            [ -f "$d/package.json" ] || continue
+            if node -e "const p=require('./$d/package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)" 2>/dev/null; then
+              NODE_DIR="$d"
+              break
+            fi
+          done
+
+          GRADLE_DIR=""
+          for d in . */; do
+            d="${d%/}"
+            if [ -f "$d/gradlew" ] && { [ -f "$d/settings.gradle.kts" ] || [ -f "$d/settings.gradle" ]; }; then
+              GRADLE_DIR="$d"
+              break
+            fi
+          done
+
+          FLUTTER_DIR=""
+          for d in . */; do
+            d="${d%/}"
+            if [ -f "$d/pubspec.yaml" ] && grep -q "^flutter:" "$d/pubspec.yaml"; then
+              FLUTTER_DIR="$d"
+              break
+            fi
+          done
+
+          echo "node_dir=$NODE_DIR" >> "$GITHUB_OUTPUT"
+          echo "gradle_dir=$GRADLE_DIR" >> "$GITHUB_OUTPUT"
+          echo "flutter_dir=$FLUTTER_DIR" >> "$GITHUB_OUTPUT"
+          echo "Detected: node=$NODE_DIR gradle=$GRADLE_DIR flutter=$FLUTTER_DIR"
+
+  node-tests:
+    name: Node tests
+    needs: detect
+    if: needs.detect.outputs.node_dir != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: ${{ needs.detect.outputs.node_dir }}
+        run: npm install
+
+      - name: Run tests
+        working-directory: ${{ needs.detect.outputs.node_dir }}
+        run: npm test
+
+  gradle-tests:
+    name: Gradle (Kotlin) tests
+    needs: detect
+    if: needs.detect.outputs.gradle_dir != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Run tests
+        working-directory: ${{ needs.detect.outputs.gradle_dir }}
+        run: ./gradlew test
+
+  flutter-tests:
+    name: Flutter (Dart) tests
+    needs: detect
+    if: needs.detect.outputs.flutter_dir != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        working-directory: ${{ needs.detect.outputs.flutter_dir }}
+        run: flutter pub get
+
+      - name: Run tests
+        working-directory: ${{ needs.detect.outputs.flutter_dir }}
+        run: flutter test

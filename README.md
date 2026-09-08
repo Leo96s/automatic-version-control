@@ -11,6 +11,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 * Publica automaticamente uma **GitHub Release** com as notas da versão
 * Sincroniza as versões de plugins locais detetados através de uma extensão instalada apenas em projetos de plugins
 * Audita dependências npm e cria/atualiza um Issue do GitHub quando encontra vulnerabilidades **high** ou **critical**
+* Disponibiliza uma extensão instalável para evitar que o teu próprio workflow de CI corra duas vezes para o mesmo commit (ver [Evitar execuções duplicadas de CI](#evitar-execuções-duplicadas-de-ci))
 * Em projetos **Kotlin/Android ou Flutter**, compila e anexa à Release um **APK de release assinado** (ver [Build + release de APK](#build--release-de-apk-kotlinflutter))
 * Ignora commits de merge, commits de release do próprio bot (`chore(release): ...`) e mensagens sem prefixo semântico
 * Valida localmente as mensagens de commit (Conventional Commits) antes de permitir o commit
@@ -61,6 +62,50 @@ Em repositórios com `package-lock.json` ou `npm-shrinkwrap.json` rastreados pel
 
 O workflow usa apenas `GITHUB_TOKEN`, com `contents: read` e `issues: write`. O Issue permanece aberto até a resolução e revisão manual. Um projeto com `package.json` mas sem lockfile npm rastreado não recebe este workflow, porque não há uma árvore de dependências reproduzível para auditar. A deteção inclui locks em subpastas de monorepos e exclui sempre `.git` e `node_modules`.
 
+### Testes automáticos de CI (`ci.yml`)
+
+O instalador deteta, na raiz e nas subpastas de primeiro nível (mesma convenção do `mobile-release.yml`):
+
+* **Node**: `package.json` com um script `test` definido;
+* **Gradle/Kotlin**: `gradlew` + `settings.gradle[.kts]`;
+* **Flutter**: `pubspec.yaml` com secção `flutter:`.
+
+Assim que deteta pelo menos uma destas stacks, copia `.github/workflows/ci.yml` — workflow genérico gerido por este pacote, **sempre substituído pela versão mais recente ao voltar a correr o instalador, mesmo que a versão existente tenha sido personalizada manualmente**. Sem nenhuma destas stacks detetada, uma cópia ainda byte-a-byte igual ao template anterior é removida; uma cópia personalizada é sempre preservada.
+
+**Aviso:** a deteção é por stack, não por projeto inteiro. Um repositório com várias linguagens (ex. backend em .NET + frontend em Node) recebe o `ci.yml` gerado assim que só uma das três stacks reconhecidas for encontrada — mas o workflow gerado só sabe testar Node, Gradle/Kotlin e Flutter; outras stacks (.NET, Python, Go, etc.) não são cobertas por ele. Se já tinhas um `ci.yml` próprio a testar essas outras stacks (ou com lógica adicional, como um E2E com Docker), ele é substituído na mesma da próxima vez que correres o instalador — não há forma de manter uma versão personalizada num projeto onde uma das três stacks é detetada.
+
+O workflow gerado:
+
+1. Um job `pre_job` usa a extensão `skip-duplicate-run` (ver abaixo) para nunca testar duas vezes o mesmo commit.
+2. Um job `detect` confirma outra vez em runtime, como rede de segurança, qual das três stacks está presente e em que pasta.
+3. Um job independente por stack (`node-tests`, `gradle-tests`, `flutter-tests`) instala as dependências e corre os testes (`npm test`, `./gradlew test`, `flutter test`, respetivamente) — só corre(m) o(s) job(s) da(s) stack(s) realmente presentes.
+
+### Evitar execuções duplicadas de CI
+
+Um padrão comum causa um bug silencioso: se um workflow de CI disparar em `push` para `main` **e** `dev`, um merge por fast-forward de `dev` para `main` empurra o **mesmo commit SHA** para as duas branches. Como o workflow escuta `push` nas duas, o GitHub dispara uma execução completa por cada branch atualizada — testando duas vezes o mesmo commit.
+
+O instalador copia sempre `.github/actions/skip-duplicate-run/action.yml`, uma extensão que envolve a [`fkirc/skip-duplicate-actions`](https://github.com/fkirc/skip-duplicate-actions) e deteta quando o commit atual já teve uma execução bem-sucedida deste workflow. O `ci.yml` gerado (acima) já a usa automaticamente. Se o teu projeto tiver uma stack fora de Node/Gradle/Flutter e por isso não receber o `ci.yml` gerado, podes referenciá-la manualmente no teu próprio workflow:
+
+```yaml
+jobs:
+  pre_job:
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip.outputs.should_skip }}
+    steps:
+      - id: skip
+        uses: ./.github/actions/skip-duplicate-run
+
+  backend:
+    needs: pre_job
+    if: needs.pre_job.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # ...
+```
+
+Só é preciso aplicar `needs: pre_job` + a condição `if` aos jobs que arrancam diretamente do evento (sem outro job como dependência) — jobs que já dependem desses via `needs` saltam em cascata automaticamente. Eventos `pull_request`, `workflow_dispatch`, `schedule` e `merge_group` nunca são saltados.
+
 ## Instalação noutro repositório
 
 Este pacote não está publicado no registo npm (`"private": true`) — corre-se diretamente a partir do repositório GitHub, dentro da raiz do repositório onde o queres aplicar (tem de já ser um repositório git):
@@ -72,8 +117,10 @@ npx github:Leo96s/automatic-version-control
 O instalador (`bin/install.js`):
 
 * Copia sempre para o repositório de destino `.github/workflows/versioning.yml` (workflow genérico gerido por este pacote — é sempre substituído pela versão mais recente ao voltar a correr o instalador)
+* Copia sempre `.github/actions/skip-duplicate-run/action.yml` (ver [Evitar execuções duplicadas de CI](#evitar-execuções-duplicadas-de-ci)) — um ficheiro estático que só tem efeito se estiver referenciado por um workflow, seja o `ci.yml` gerado (ver abaixo) ou um workflow teu
 * Grava o commit SHA deste pacote instalado em `.github/automatic-version-control.version` — permite a uma ferramenta externa (ex. um hook local) saber se o repositório está desatualizado sem ter de comparar conteúdo de ficheiros
 * Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
+* **Se detetar um script `test` num `package.json` (raiz ou subpasta de primeiro nível), ou um projeto Gradle/Kotlin ou Flutter**: copia `.github/workflows/ci.yml` (ver [Testes automáticos de CI](#testes-automáticos-de-ci-ciyml)) — **substituindo sempre qualquer `ci.yml` já existente**, incluindo um escrito à mão
 * **Se detetar metadados de plugin**: copia apenas nesses projetos a extensão `.github/actions/plugin-version-sync/action.yml` e o helper `scripts/sync-plugin-versions.js`; o workflow genérico chama a extensão no mesmo job do release
 * **Se detetar `package-lock.json` ou `npm-shrinkwrap.json` rastreado pelo Git**: copia `.github/workflows/npm-audit.yml` e `scripts/npm-audit.js`, que fazem a auditoria periódica das dependências e notificam através de um Issue do GitHub (inclui locks em subpastas de monorepos; ignora `.git` e `node_modules`)
 * **Se o repositório tiver `package.json`**: copia também `commitlint.config.js`, `.secretlintrc.json`, `.lintstagedrc.json` e `scripts/pre-commit-checks.js`; garante que `node_modules/` está no `.gitignore`; adiciona as devDependencies necessárias e o script `prepare` ao `package.json` (encadeando com um `prepare` já existente, se houver); corre `npm install`; configura os hooks do Husky (`commit-msg` e `pre-commit`; se já existir um `pre-commit` personalizado, não o substitui — mostra a instrução para o adicionares manualmente)
@@ -147,6 +194,8 @@ Instalados em `.husky/`:
 ├── .github/workflows/versioning.yml  # workflow genérico de versionamento semântico
 ├── .github/workflows/npm-audit.yml    # auditoria npm + notificação por Issue
 ├── .github/actions/plugin-version-sync/action.yml # extensão de plugins, instalada condicionalmente
+├── .github/actions/skip-duplicate-run/action.yml # evita CI duplicado, copiado sempre
+├── .github/workflows/ci.yml           # testes Node/Gradle/Flutter, instalado condicionalmente
 ├── .github/workflows/mobile-release.yml # build + release de APK (Kotlin/Flutter)
 ├── scripts/npm-audit.js               # descoberta e normalização dos resultados npm audit
 ├── commitlint.config.js              # regras de validação de mensagens de commit
