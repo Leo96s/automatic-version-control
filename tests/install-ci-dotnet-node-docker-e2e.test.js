@@ -154,7 +154,7 @@ test("the specific template file itself is valid YAML with citable placeholders"
 });
 
 test("the docker-e2e job has no project-specific literal values", () => {
-  const content = fs.readFileSync(specificTemplatePath, "utf8");
+  const content = fs.readFileSync(specificTemplatePath, "utf8").replace(/\r\n/g, "\n");
 
   assert.doesNotMatch(content, /gamesphere/i, "the template must not reference any specific project");
 
