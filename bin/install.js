@@ -36,6 +36,9 @@ function log(msg) {
 }
 
 function run(cmd) {
+  // cmd is always a fixed internal string (e.g. 'npx husky init'), never
+  // externally controlled input.
+  // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
   execSync(cmd, { cwd: targetRoot, stdio: 'inherit' });
 }
 

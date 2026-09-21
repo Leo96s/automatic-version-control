@@ -31,7 +31,7 @@ function runInstaller(root) {
 test("the action wraps fkirc/skip-duplicate-actions and exposes should_skip", () => {
   const action = fs.readFileSync(actionTemplatePath, "utf8");
 
-  assert.match(action, /uses: fkirc\/skip-duplicate-actions@v5/);
+  assert.match(action, /uses: fkirc\/skip-duplicate-actions@[0-9a-f]{40}/);
   assert.match(action, /skip_after_successful_duplicate:\s*'true'/);
   assert.match(action, /do_not_skip:.*pull_request/);
   assert.match(action, /should_skip:\s*\r?\n\s*description:.*\r?\n\s*value: \$\{\{ steps\.skip_check\.outputs\.should_skip \}\}/);

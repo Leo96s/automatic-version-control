@@ -177,7 +177,7 @@ test("checks out the repository before running the local skip-duplicate-run acti
   const workflow = fs.readFileSync(workflowTemplatePath, "utf8").replace(/\r\n/g, "\n");
   const preJobMatch = workflow.match(/pre_job:\n([\s\S]*?)\n\n {2}\S/);
   assert.ok(preJobMatch, "expected to find the pre_job job");
-  assert.match(preJobMatch[1], /uses: actions\/checkout@v5[\s\S]*uses: \.\/\.github\/actions\/skip-duplicate-run/, "a local action needs the repository checked out first");
+  assert.match(preJobMatch[1], /uses: actions\/checkout@[0-9a-f]{40}[\s\S]*uses: \.\/\.github\/actions\/skip-duplicate-run/, "a local action needs the repository checked out first");
 });
 
 test("references the skip-duplicate-run action and covers all three stacks", () => {

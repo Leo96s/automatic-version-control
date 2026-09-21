@@ -70,7 +70,7 @@ test("installs the security checklist for a plugin project too", (t) => {
 });
 
 test("the workflow template has a diff-scoped pull_request job and audits GitHub Actions workflows", () => {
-  const workflow = fs.readFileSync(workflowTemplatePath, "utf8");
+  const workflow = fs.readFileSync(workflowTemplatePath, "utf8").replace(/\r\n/g, "\n");
 
   assert.match(workflow, /pull_request:\n\s+branches:\n\s+- main/);
   assert.match(workflow, /checklist-pr:/);

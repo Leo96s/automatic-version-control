@@ -24,7 +24,7 @@ jobs:
     outputs:
       should_skip: ${{ steps.skip.outputs.should_skip }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - id: skip
         uses: ./.github/actions/skip-duplicate-run
@@ -37,10 +37,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 10.0.x
 
@@ -58,10 +58,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -103,6 +103,17 @@ jobs:
     # nenhuma configuração. Configura em Settings -> Secrets and variables
     # -> Actions (ver README) para usar os valores reais da tua aplicação —
     # nenhuma alteração a este ficheiro é necessária.
+    #
+    # O valor por omissão de POSTGRES_PASSWORD abaixo ('ci-e2e-password') é
+    # uma string-placeholder para CI (nunca usada em produção real), mas
+    # parece um segredo o suficiente para o gitleaks a assinalar como
+    # "generic-api-key" — é um falso positivo conhecido, allowlisted no
+    # .gitleaksignore deste repositório (fingerprint do commit que
+    # introduziu esta linha). Se instalares este template noutro projeto, o
+    # teu próprio commit vai gerar um fingerprint diferente — acrescenta a
+    # entrada equivalente ao .gitleaksignore desse projeto se o gate de
+    # segurança acusar o mesmo falso positivo (o mesmo pode acontecer com
+    # outros valores por omissão nesta secção, ex. JWT_SECRET/INITIAL_ADMIN_PASSWORD).
     env:
       POSTGRES_DB: ${{ vars.CI_E2E_POSTGRES_DB || 'ci_e2e' }}
       POSTGRES_USER: ${{ vars.CI_E2E_POSTGRES_USER || 'ci_e2e' }}
@@ -127,10 +138,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm

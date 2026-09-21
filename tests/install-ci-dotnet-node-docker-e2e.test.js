@@ -90,7 +90,7 @@ test("generates the dotnet+node+docker-e2e workflow for a GameSphere-shaped proj
   const normalized = workflow.replace(/\r\n/g, "\n");
   const preJobMatch = normalized.match(/pre_job:\n([\s\S]*?)\n\n {2}\S/);
   assert.ok(preJobMatch, "expected to find the pre_job job");
-  assert.match(preJobMatch[1], /uses: actions\/checkout@v5[\s\S]*uses: \.\/\.github\/actions\/skip-duplicate-run/, "a local action needs the repository checked out first");
+  assert.match(preJobMatch[1], /uses: actions\/checkout@[0-9a-f]{40}[\s\S]*uses: \.\/\.github\/actions\/skip-duplicate-run/, "a local action needs the repository checked out first");
 });
 
 test("uses only the base compose file when no prod override exists", (t) => {
