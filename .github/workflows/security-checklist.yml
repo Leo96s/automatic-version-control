@@ -1,0 +1,159 @@
+name: security checklist
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: security-checklist-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checklist:
+    # The scheduled workflow runs on the default branch; this guard also
+    # prevents a manual run from checking a non-main ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - name: Install gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release download --repo gitleaks/gitleaks --pattern 'gitleaks_*_linux_x64.tar.gz' --output gitleaks.tar.gz --clobber
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Install semgrep
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/pip" install --disable-pip-version-check semgrep
+          echo "$RUNNER_TEMP/semgrep-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run security checklist
+        id: checklist
+        continue-on-error: true
+        env:
+          REPORT_FILE: ${{ runner.temp }}/security-checklist-report.md
+        shell: bash
+        run: |
+          set +e
+          node scripts/security-checklist.js --report-file "$REPORT_FILE"
+          STATUS=$?
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish checklist report to the workflow summary
+        if: always()
+        env:
+          REPORT_FILE: ${{ runner.temp }}/security-checklist-report.md
+        shell: bash
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            cat "$REPORT_FILE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Create or update the security issue
+        if: steps.checklist.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_FILE: ${{ runner.temp }}/security-checklist-report.md
+          ISSUE_TITLE: '[Security] Checklist requires attention'
+        shell: bash
+        run: |
+          ISSUE_NUMBER=$(gh issue list \
+            --state open \
+            --limit 100 \
+            --json number,title \
+            --jq '.[] | select(.title == "[Security] Checklist requires attention") | .number' \
+            | head -n 1)
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            gh issue edit "$ISSUE_NUMBER" --body-file "$REPORT_FILE"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$REPORT_FILE"
+          fi
+
+      - name: Fail the security gate
+        if: always() && steps.checklist.outputs.status != '0'
+        run: exit 1
+
+  checklist-pr:
+    # Runs only for pull requests, scoped to the diff since the merge-base
+    # with the target branch — much cheaper than the full-history/full-repo
+    # scan the checklist job does on main, and catches problems before merge
+    # instead of after.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      - name: Install gitleaks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release download --repo gitleaks/gitleaks --pattern 'gitleaks_*_linux_x64.tar.gz' --output gitleaks.tar.gz --clobber
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Install semgrep
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/pip" install --disable-pip-version-check semgrep
+          echo "$RUNNER_TEMP/semgrep-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Compute merge base
+        id: merge_base
+        shell: bash
+        run: |
+          BASE_SHA=$(git merge-base "origin/${{ github.event.pull_request.base.ref }}" HEAD)
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Run security checklist (PR diff)
+        env:
+          REPORT_FILE: ${{ runner.temp }}/security-checklist-report.md
+        shell: bash
+        run: node scripts/security-checklist.js --diff-base "${{ steps.merge_base.outputs.sha }}" --report-file "$REPORT_FILE"
+
+      - name: Publish checklist report to the workflow summary
+        if: always()
+        env:
+          REPORT_FILE: ${{ runner.temp }}/security-checklist-report.md
+        shell: bash
+        run: |
+          if [ -f "$REPORT_FILE" ]; then
+            cat "$REPORT_FILE" >> "$GITHUB_STEP_SUMMARY"
+          fi

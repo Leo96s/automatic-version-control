@@ -518,6 +518,12 @@ function main() {
 
   copyTemplateFile('.github/workflows/versioning.yml');
   copyTemplateFile('.github/actions/skip-duplicate-run/action.yml');
+  // gitleaks + semgrep são ferramentas externas agnósticas de linguagem, e o
+  // script que as invoca só precisa de Node no runner (garantido pelo
+  // actions/setup-node) — por isso este workflow é instalado sempre, sem
+  // deteção de stack, tal como o versioning.yml.
+  copyTemplateFile('.github/workflows/security-checklist.yml');
+  copyTemplateFile('scripts/security-checklist.js');
   writeVersionMarker();
 
   const isPluginProject = detectPluginProject();

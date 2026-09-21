@@ -11,6 +11,7 @@ Sistema de **versionamento semântico automático** baseado em mensagens de comm
 * Publica automaticamente uma **GitHub Release** com as notas da versão
 * Sincroniza as versões de plugins locais detetados através de uma extensão instalada apenas em projetos de plugins
 * Audita dependências npm e cria/atualiza um Issue do GitHub quando encontra vulnerabilidades **high** ou **critical**
+* Instala sempre, em qualquer repositório, um checklist de segurança (segredos no histórico Git + análise estática genérica) que cria/atualiza um Issue do GitHub quando encontra findings
 * Disponibiliza uma extensão instalável para evitar que o teu próprio workflow de CI corra duas vezes para o mesmo commit (ver [Evitar execuções duplicadas de CI](#evitar-execuções-duplicadas-de-ci))
 * Em projetos **Kotlin/Android ou Flutter**, compila e anexa à Release um **APK de release assinado** (ver [Build + release de APK](#build--release-de-apk-kotlinflutter))
 * Ignora commits de merge, commits de release do próprio bot (`chore(release): ...`) e mensagens sem prefixo semântico
@@ -61,6 +62,23 @@ Em repositórios com `package-lock.json` ou `npm-shrinkwrap.json` rastreados pel
 * termina com falha para tornar o problema visível, sem bloquear o workflow separado de versionamento/release.
 
 O workflow usa apenas `GITHUB_TOKEN`, com `contents: read` e `issues: write`. O Issue permanece aberto até a resolução e revisão manual. Um projeto com `package.json` mas sem lockfile npm rastreado não recebe este workflow, porque não há uma árvore de dependências reproduzível para auditar. A deteção inclui locks em subpastas de monorepos e exclui sempre `.git` e `node_modules`.
+
+### Checklist de segurança (gitleaks + semgrep)
+
+O instalador copia sempre — em qualquer repositório, independentemente da stack ou de ter `package.json` — `.github/workflows/security-checklist.yml` e `scripts/security-checklist.js`. Ao contrário do `npm-audit.yml` ou do `ci.yml`, este workflow não depende de nenhuma stack: o `gitleaks` e o `semgrep` são ferramentas externas agnósticas de linguagem, e o script que os invoca só precisa de Node no runner (garantido pelo `actions/setup-node`), nunca de um `package.json` no repositório de destino. O workflow:
+
+* corre em cada push para `main`, semanalmente e através de `workflow_dispatch` (job `checklist`), e também em cada pull request para `main` (job `checklist-pr`, ver abaixo);
+* corre `gitleaks detect` sobre **todo o histórico Git**, à procura de segredos alguma vez commitados (mesmo já removidos num commit posterior);
+* corre `semgrep --config p/security-audit` sobre todo o código do repositório — um ruleset público e genérico de segurança, sem configuração específica do projeto;
+* corre também `semgrep --config p/github-actions` só sobre `.github/` (workflows e actions compostas), à procura de problemas conhecidos de segurança em CI (ex. `pull_request_target` a dar checkout de código não confiável com acesso a secrets) — relevante porque este pacote gera os próprios workflows que os projetos de destino passam a ter;
+* instala o `semgrep` num virtualenv isolado em `$RUNNER_TEMP` (evita o erro `externally-managed-environment` do `pip` em runners `ubuntu-latest`, onde pacotes como `typing_extensions` já vêm instalados pelo `apt`);
+* publica o relatório no Summary da Action;
+* cria ou atualiza o Issue aberto `[Security] Checklist requires attention` quando encontra segredos, findings do semgrep (código ou workflows), ou não consegue concluir a análise;
+* termina com falha para tornar o problema visível, sem bloquear os outros workflows.
+
+Numa pull request para `main`, o job separado `checklist-pr` corre o mesmo `gitleaks`/`semgrep`, mas limitado ao diff introduzido pela PR (`gitleaks --log-opts` desde o merge-base, `semgrep --baseline-commit` no mesmo merge-base) — mais rápido do que repetir a análise completa, e falha o check da PR diretamente (sem criar Issue, já que o próprio check a falhar é a notificação certa antes do merge). A auditoria de `.github/` (`p/github-actions`) corre sempre por completo em ambos os jobs, por ser barata.
+
+O relatório também lista, numa secção "Out of mechanical reach", práticas de segurança que estas ferramentas não conseguem verificar mecanicamente (RLS, mass assignment, rate limiting, proteção contra bots, autorização por scope, over-fetching de API, security headers, HTTPS forçado) — a rever manualmente. Três destas (RLS, rate limiting, security headers) recebem também um **hint heurístico informativo**: uma pesquisa (`git grep`) por um sinal conhecido de mitigação nos ficheiros rastreados pelo Git (ex. `ENABLE ROW LEVEL SECURITY`, `express-rate-limit`, `helmet(`). Este hint é sempre **não-bloqueante** — nunca influencia o `Status` do relatório nem o exit code do workflow — porque a presença do sinal não confirma que a mitigação está corretamente aplicada em todos os sítios relevantes, nem a ausência confirma que falta. Ao contrário destes hints, o gitleaks, os dois semgrep (código e workflows) são todos **bloqueantes**.
 
 ### Testes automáticos de CI (`ci.yml`)
 
@@ -175,6 +193,7 @@ O instalador (`bin/install.js`):
 
 * Copia sempre para o repositório de destino `.github/workflows/versioning.yml` (workflow genérico gerido por este pacote — é sempre substituído pela versão mais recente ao voltar a correr o instalador)
 * Copia sempre `.github/actions/skip-duplicate-run/action.yml` (ver [Evitar execuções duplicadas de CI](#evitar-execuções-duplicadas-de-ci)) — um ficheiro estático que só tem efeito se estiver referenciado por um workflow, seja o `ci.yml` gerado (ver abaixo) ou um workflow teu
+* Copia sempre `.github/workflows/security-checklist.yml` e `scripts/security-checklist.js` (ver [Checklist de segurança](#checklist-de-segurança-gitleaks--semgrep)) — não depende de nenhuma stack nem de `package.json`
 * Grava o commit SHA deste pacote instalado em `.github/automatic-version-control.version` — permite a uma ferramenta externa (ex. um hook local) saber se o repositório está desatualizado sem ter de comparar conteúdo de ficheiros
 * Deteta se o repositório é um projeto **Gradle/Kotlin** ou **Flutter** (mesma lógica descrita em [Build + release de APK](#build--release-de-apk-kotlinflutter)) e só nesse caso copia também `.github/workflows/mobile-release.yml` — noutros repositórios (Node, etc.) esse workflow nem chega a ser instalado, para não ficar lá um workflow morto a correr sem fazer nada em cada release
 * **Se detetar um projeto .NET com testes + frontend Node + Docker Compose, um script `test` num `package.json` (raiz ou subpasta de primeiro nível), ou um projeto Gradle/Kotlin ou Flutter — e o repositório não for um projeto de plugin Claude Code/Codex**: gera `.github/workflows/ci.yml`, a partir do template específico correspondente ou do genérico (ver [Testes automáticos de CI](#testes-automáticos-de-ci-ciyml)) — **substituindo sempre qualquer `ci.yml` já existente**, incluindo um escrito à mão. Um projeto de plugin nunca recebe `ci.yml`, independentemente da stack detetada.
@@ -250,6 +269,8 @@ Instalados em `.husky/`:
 ├── scripts/pre-commit-checks.js      # verificações de segurança pre-commit
 ├── .github/workflows/versioning.yml  # workflow genérico de versionamento semântico
 ├── .github/workflows/npm-audit.yml    # auditoria npm + notificação por Issue
+├── .github/workflows/security-checklist.yml # gitleaks + semgrep, copiado sempre
+├── scripts/security-checklist.js      # deteção de segredos + análise estática, notificação por Issue
 ├── .github/actions/plugin-version-sync/action.yml # extensão de plugins, instalada condicionalmente
 ├── .github/actions/skip-duplicate-run/action.yml # evita CI duplicado, copiado sempre
 ├── .github/workflows/ci.yml           # template genérico (Node/Gradle/Flutter), instalado condicionalmente
