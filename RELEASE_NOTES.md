@@ -1,2 +1,2 @@
-## v2.12.0 - 2026-09-21
-* feat(security): install a generic, PR-aware security checklist in every project
+## v2.12.1 - 2026-09-21
+* fix(security): resolve the security checklist's own findings
