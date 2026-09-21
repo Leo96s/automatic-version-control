@@ -1,2 +1,2 @@
-## v2.11.5 - 2026-09-21
-* fix(ci): skip ci.yml for Claude Code/Codex plugin projects
+## v2.12.0 - 2026-09-21
+* feat(security): install a generic, PR-aware security checklist in every project
