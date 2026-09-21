@@ -150,6 +150,22 @@ test("generalizes to differently-named directories, not just GameSphere's own na
   assert.match(workflow, /docker compose -f docker-compose\.yml up -d --build/);
 });
 
+test("does not install any ci.yml for a plugin project even when the dotnet+node+docker-e2e stack matches", (t) => {
+  const root = createFixture(t);
+  writeGameSphereLikeFixture(root);
+  const manifestPath = path.join(root, ".claude-plugin", "plugin.json");
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  fs.writeFileSync(manifestPath, '{ "name": "fictional-claude", "version": "0.1.0" }\n');
+  execFileSync("git", ["add", "--", ".claude-plugin/plugin.json"], { cwd: root });
+
+  const result = runInstaller(root, createFakeNodeTools(t));
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.doesNotMatch(result.stdout, /Detetada stack específica/);
+  assert.match(result.stdout, /SKIP \.github\/workflows\/ci\.yml \(projeto de plugin/i);
+  assert.equal(fs.existsSync(path.join(root, ".github", "workflows", "ci.yml")), false);
+});
+
 test("the specific template file itself is valid YAML with citable placeholders", () => {
   const content = fs.readFileSync(specificTemplatePath, "utf8");
   assert.match(content, /\{\{BACKEND_TEST_PROJECT\}\}/);

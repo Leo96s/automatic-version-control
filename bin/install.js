@@ -520,7 +520,9 @@ function main() {
   copyTemplateFile('.github/actions/skip-duplicate-run/action.yml');
   writeVersionMarker();
 
-  if (detectPluginProject()) {
+  const isPluginProject = detectPluginProject();
+
+  if (isPluginProject) {
     for (const relPath of PLUGIN_VERSION_SYNC_FILES) {
       copyTemplateFile(relPath);
     }
@@ -539,25 +541,35 @@ function main() {
     log('SKIP .github/workflows/mobile-release.yml (não detetei projeto Kotlin/Android nem Flutter).');
   }
 
-  const specificTemplate = SPECIFIC_CI_TEMPLATES
-    .map((template) => ({ template, vars: template.detect() }))
-    .find((match) => match.vars !== null);
-
-  if (specificTemplate) {
-    installRenderedCiTemplate(specificTemplate.template.templatePath, specificTemplate.vars);
-    log(`Detetada stack específica (${specificTemplate.template.id}) — ci.yml gerado a partir do template dedicado.`);
+  // Um projeto de plugin Claude Code/Codex não é uma aplicação a testar via
+  // ci.yml, mesmo que o seu package.json tenha um script "test" (tooling
+  // interno) ou corresponda a um template específico — nunca recebe ci.yml.
+  if (isPluginProject) {
+    for (const relPath of CI_TESTS_FILES) {
+      removeUnchangedTemplateFile(relPath, 'projeto de plugin Claude Code ou Codex — sem aplicação a testar via ci.yml');
+    }
+    log('SKIP .github/workflows/ci.yml (projeto de plugin Claude Code ou Codex).');
   } else {
-    const nodeTestDir = detectNodeTestProject();
-    if (nodeTestDir !== null || mobileType !== 'none') {
-      for (const relPath of CI_TESTS_FILES) {
-        copyTemplateFile(relPath);
-      }
-      log('Detetados testes (Node, Gradle/Kotlin ou Flutter) — ci.yml genérico instalado/atualizado.');
+    const specificTemplate = SPECIFIC_CI_TEMPLATES
+      .map((template) => ({ template, vars: template.detect() }))
+      .find((match) => match.vars !== null);
+
+    if (specificTemplate) {
+      installRenderedCiTemplate(specificTemplate.template.templatePath, specificTemplate.vars);
+      log(`Detetada stack específica (${specificTemplate.template.id}) — ci.yml gerado a partir do template dedicado.`);
     } else {
-      for (const relPath of CI_TESTS_FILES) {
-        removeUnchangedTemplateFile(relPath, 'não detetei testes Node, Gradle/Kotlin ou Flutter');
+      const nodeTestDir = detectNodeTestProject();
+      if (nodeTestDir !== null || mobileType !== 'none') {
+        for (const relPath of CI_TESTS_FILES) {
+          copyTemplateFile(relPath);
+        }
+        log('Detetados testes (Node, Gradle/Kotlin ou Flutter) — ci.yml genérico instalado/atualizado.');
+      } else {
+        for (const relPath of CI_TESTS_FILES) {
+          removeUnchangedTemplateFile(relPath, 'não detetei testes Node, Gradle/Kotlin ou Flutter');
+        }
+        log('SKIP .github/workflows/ci.yml (não detetei testes Node, Gradle/Kotlin ou Flutter).');
       }
-      log('SKIP .github/workflows/ci.yml (não detetei testes Node, Gradle/Kotlin ou Flutter).');
     }
   }
 

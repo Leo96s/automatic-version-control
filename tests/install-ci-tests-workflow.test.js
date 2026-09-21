@@ -18,6 +18,10 @@ function createFixture(t) {
   return root;
 }
 
+function trackFixture(root, relativePaths) {
+  execFileSync("git", ["add", "--", ...relativePaths], { cwd: root });
+}
+
 function createFakeNodeTools(t) {
   const binRoot = fs.mkdtempSync(path.join(os.tmpdir(), "automatic-version-control-fake-node-"));
   t.after(() => fs.rmSync(binRoot, { recursive: true, force: true }));
@@ -135,6 +139,26 @@ test("overwrites a customized ci.yml when a testable project is detected", (t) =
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(fs.readFileSync(workflowPath, "utf8"), fs.readFileSync(workflowTemplatePath, "utf8"));
   assert.match(result.stdout, /OK\s+\.github\/workflows\/ci\.yml \(substituído pela versão mais recente\)/);
+});
+
+test("does not install ci.yml for a plugin project even with a root Node test script", (t) => {
+  const root = createFixture(t);
+  const binRoot = createFakeNodeTools(t);
+  const manifestPath = path.join(root, ".claude-plugin", "plugin.json");
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  fs.writeFileSync(manifestPath, '{ "name": "fictional-claude", "version": "0.1.0" }\n');
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    name: "fictional-plugin",
+    version: "0.1.0",
+    scripts: { test: "node --test" },
+  }) + "\n");
+  trackFixture(root, [".claude-plugin/plugin.json"]);
+
+  const result = runInstaller(root, binRoot);
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(fs.existsSync(path.join(root, ".github", "workflows", "ci.yml")), false);
+  assert.match(result.stdout, /SKIP \.github\/workflows\/ci\.yml \(projeto de plugin/i);
 });
 
 test("removes an unchanged ci.yml once no testable project is detected anymore", (t) => {
